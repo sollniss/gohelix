@@ -5,7 +5,8 @@ challenge gives you a `before.go` and an `after.go`. Your job is to transform on
 into the other in as few keystrokes as possible. Your best keystroke count and time are saved
 per challenge.
 
-<video src="https://github.com/sollniss/gohelix/raw/main/docs/demo.webm" controls muted width="800"></video>
+[demo](https://github.com/user-attachments/assets/30f0ebce-3a8f-4795-b95d-b534810e9697)
+
 
 > If the video doesn't play above, [watch demo.webm](docs/demo.webm).
 
