@@ -172,16 +172,16 @@ func (m Model) resultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.advance()
 		m.state = statePreview
 		cmd = m.requestDiff()
-	case "j", "down", "l":
+	case "j", "down":
 		m.resultScroll++
 		m.clampResultScroll()
-	case "k", "up", "h":
+	case "k", "up":
 		if m.resultScroll > 0 {
 			m.resultScroll--
 		}
-	case "right":
+	case "l", "right":
 		m.resultHScroll += 4
-	case "left":
+	case "h", "left":
 		m.resultHScroll -= 4
 		if m.resultHScroll < 0 {
 			m.resultHScroll = 0
