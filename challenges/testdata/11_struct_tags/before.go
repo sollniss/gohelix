@@ -1,8 +1,8 @@
 package main
 
 type Config struct {
-	Host string
-	Port int
-	Name string
+	Host  string
+	Port  int
+	Name  string
 	Debug bool
 }
