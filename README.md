@@ -4,9 +4,11 @@ A terminal game for practicing [Helix](https://helix-editor.com) motions. Each
 challenge gives you a `before.go` and an `after.go`; transform one into the
 other in as few keystrokes as possible.
 
-[demo](https://github.com/user-attachments/assets/30f0ebce-3a8f-4795-b95d-b534810e9697)
-
-> If the video doesn't play above, [watch demo.webm](docs/demo.webm).
+|    ![challenge picker](docs/main_menu.png)    | ![challenge preview](docs/challenge_preview.png) |
+| :-------------------------------------------: | :----------------------------------------------: |
+|               challenge picker                |            preview (difft diff view)             |
+| ![editing in helix](docs/challenge_helix.png) | ![failed-run result](docs/challenge_failed.png)  |
+|       editing in helix with split view        |          result after a failed attempt           |
 
 ## Install
 
@@ -49,19 +51,9 @@ Keys:
 Arrow keys work wherever `j/k/h/l` do. The `d` and `s` choices persist across
 sessions.
 
-## Solution split
-
-`s` cycles a read-only copy of the solution into a helix split:
-`off`/`left`/`right`/`top`/`bottom`. During a split run the peek key
-(`ctrl-t` by default) toggles a free look at the solution — keys pressed while
-peeking don't count. Quitting with `:q`/`:wq`/`:x` (and `!` variants) closes
-the solution window automatically.
-
 ## Configuration
 
-`config.json` in the config dir (`~/.config/gohelix/` on Linux). All fields
-are optional; `diff_mode` and `solution_split` are written by the in-app
-toggles.
+`config.json` in the config dir (`~/.config/gohelix/` on Linux). `diff_mode` and `solution_split` are written by the in-app toggles.
 
 | Field                                           | Meaning                                                                                                       |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
