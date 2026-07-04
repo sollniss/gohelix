@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sollniss/gohelix/diffview"
+	"github.com/sollniss/gohelix/runner"
 )
 
 // View renders the current state.
@@ -23,17 +24,21 @@ func (m Model) View() string {
 		content = ""
 	}
 
-	return lipgloss.NewStyle().Padding(1, 2).Render(content)
+	rendered := lipgloss.NewStyle().Padding(1, 2).Render(content)
+
+	if m.height > 0 {
+		if lines := strings.Split(rendered, "\n"); len(lines) > m.height {
+			rendered = strings.Join(lines[:m.height], "\n")
+		}
+	}
+	return rendered
 }
 
-const (
-	menuTitle = "ᛝ  Helix Practice: Challenge Picker"
-	menuHelp  = "j/k navigate • enter select • esc back • q quit"
-)
+const menuTitle = "ᛝ  Helix Practice: Challenge Picker"
 
 func (m Model) menuView() string {
 	header := titleStyle.Render(menuTitle) + "\n\n"
-	footer := helpStyle.Render(menuHelp)
+	footer := helpStyle.Render(fmt.Sprintf("j/k navigate • enter select • s split: %s • esc back • q quit", m.splitPos()))
 
 	// Build every challenge row, then show only the window that fits the height.
 	lines := make([]string, len(m.challenges))
@@ -106,15 +111,25 @@ func (m Model) previewHeader() string {
 	return header.String()
 }
 
+// previewFooter builds the preview help line. The peek key is announced next
+// to the split setting, but only when the split is enabled.
+func (m Model) previewFooter() string {
+	diffToggle := ""
+	if m.difftAvailable {
+		diffToggle = " • d diff"
+	}
+	peek := ""
+	if m.splitPos().Enabled() {
+		peek = fmt.Sprintf(" • %s peek", runner.PeekKeyName(m.peekKey()))
+	}
+	return fmt.Sprintf("j/k/h/l scroll%s • enter start • s split: %s%s • ? hint • esc menu • q quit", diffToggle, m.splitPos(), peek)
+}
+
 func (m Model) previewView() string {
 	ch := m.current()
 
 	// sticky footer
-	diffToggle := ""
-	if m.difftAvailable {
-		diffToggle = " • d toggle diff"
-	}
-	footer := helpStyle.Render("j/k/h/l scroll" + diffToggle + " • enter start • ? hint • esc menu • q quit")
+	footer := helpStyle.Render(m.previewFooter())
 
 	// code body
 	var bodyStr string
@@ -190,6 +205,10 @@ func (m Model) resultView() string {
 		b.WriteString("\n")
 		b.WriteString(recordStyle.Render("  🏆 New Record!"))
 		b.WriteString("\n")
+	} else if m.passed && m.assisted {
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  (solution was open — not recorded)"))
+		b.WriteString("\n")
 	}
 
 	// Show diff when failed
@@ -204,13 +223,25 @@ func (m Model) resultView() string {
 	if !m.passed {
 		diffToggle := ""
 		if m.difftAvailable {
-			diffToggle = " • d toggle diff"
+			diffToggle = " • d diff"
 		}
 		footer = "j/k/h/l scroll" + diffToggle + " • r retry • enter next • esc menu • q quit"
 	}
 	b.WriteString(helpStyle.Render(footer))
 
 	return b.String()
+}
+
+// resultDiffAvailable is the diff window height in the result view: the
+// terminal height minus the chrome around the diff (status, blank, two stat
+// lines, blank above the diff, blank after it, the footer's top margin and
+// the footer itself = 8 rows) and the outer padding (2 rows). Sizing the diff
+// this way keeps the whole view within the terminal — Bubble Tea shows the
+// BOTTOM lines of an overflowing view, which reads as "scrolled to the
+// bottom" right after a transition. The floor keeps a few diff lines visible
+// on tiny terminals; View's clamp keeps the top on screen then.
+func (m Model) resultDiffAvailable() int {
+	return max(m.height-10, 5)
 }
 
 // resultDiffView renders a scrollable side-by-side comparison of the user's output vs expected.
@@ -228,7 +259,7 @@ func (m Model) resultDiffView() string {
 	// Apply vertical scroll
 	bodyLines := strings.Split(bodyStr, "\n")
 
-	available := max(m.height/2, 5)
+	available := m.resultDiffAvailable()
 	maxScroll := max(len(bodyLines)-available, 0)
 	scroll := min(m.resultScroll, maxScroll)
 	end := min(scroll+available, len(bodyLines))
@@ -272,7 +303,7 @@ func (m *Model) clampResultScroll() {
 		return
 	}
 	totalBody := m.diffBodyLines(m.lastResult.Output, m.current().After)
-	available := max(m.height/2, 5)
+	available := m.resultDiffAvailable()
 	maxScroll := max(totalBody-available, 0)
 	m.resultScroll = min(m.resultScroll, maxScroll)
 }

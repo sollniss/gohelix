@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-func loadConfig() *Config {
+func LoadConfig() *Config {
 	data, _ := os.ReadFile("config.json")
 	var cfg Config
 	json.Unmarshal(data, &cfg)

@@ -7,10 +7,13 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sollniss/gohelix/challenges"
+	"github.com/sollniss/gohelix/config"
 	"github.com/sollniss/gohelix/score"
 )
 
-func menuModel(height int) Model {
+func menuModel(t *testing.T, height int) Model {
+	// Isolate score/config stores from the user's real files.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	chs := make([]challenges.Challenge, 20)
 	for i := range chs {
 		chs[i] = challenges.Challenge{ID: fmt.Sprintf("ch%02d", i), Title: fmt.Sprintf("Title %d", i)}
@@ -18,6 +21,7 @@ func menuModel(height int) Model {
 	return Model{
 		challenges: chs,
 		scores:     score.NewStore(),
+		cfg:        config.NewStore(),
 		state:      stateMenu,
 		width:      80,
 		height:     height,
@@ -25,14 +29,14 @@ func menuModel(height int) Model {
 }
 
 func TestMenuViewKeepsHeaderAndFooterVisible(t *testing.T) {
-	m := menuModel(12)
+	m := menuModel(t, 12)
 	out := ansi.Strip(m.menuView())
 
 	// Header and footer are always rendered, regardless of list length.
 	if !strings.Contains(out, menuTitle) {
 		t.Errorf("menu header missing:\n%s", out)
 	}
-	if !strings.Contains(out, menuHelp) {
+	if !strings.Contains(out, "j/k navigate") || !strings.Contains(out, "s split: off") {
 		t.Errorf("menu footer missing:\n%s", out)
 	}
 	// The list is windowed to fit the height: at the top it shows challenge 1 but
@@ -47,7 +51,7 @@ func TestMenuViewKeepsHeaderAndFooterVisible(t *testing.T) {
 }
 
 func TestMenuViewFollowsCursorToBottom(t *testing.T) {
-	m := menuModel(12)
+	m := menuModel(t, 12)
 	m.menuCursor = len(m.challenges) - 1
 	m.clampMenuScroll()
 	out := ansi.Strip(m.menuView())
@@ -70,7 +74,7 @@ func TestMenuViewFitsTerminalHeight(t *testing.T) {
 	// The rendered menu must never be taller than the terminal (the bug: the list
 	// overflowed and pushed the header off the top).
 	for _, h := range []int{8, 12, 24, 60} {
-		m := menuModel(h)
+		m := menuModel(t, h)
 		got := strings.Count(m.menuView(), "\n") + 1
 		// Body height excludes the outer Padding(1,2) applied in View (2 rows).
 		if got > h-2 {

@@ -1,6 +1,6 @@
 package cache
 
-func newRing() ([]byte, []byte, int) {
+func NewRing() ([]byte, []byte, int) {
 	buf := make([]byte, 256)
 	warm := make([]byte, 0, 256)
 	mask := 256 - 1

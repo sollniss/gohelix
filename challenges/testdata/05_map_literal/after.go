@@ -1,6 +1,6 @@
 package httperr
 
-func messages() map[int]string {
+func Messages() map[int]string {
 	return map[int]string{
 		400: "bad request",
 		404: "not found",

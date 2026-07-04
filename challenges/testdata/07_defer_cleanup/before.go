@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-func processFile(path string) error {
+func ProcessFile(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err

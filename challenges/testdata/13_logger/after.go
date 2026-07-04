@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-func run(path string) error {
+func Run(path string) error {
 	log.Printf("starting %s", path)
 	info, err := os.Stat(path)
 	if err != nil {

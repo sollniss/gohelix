@@ -1,6 +1,6 @@
 package main
 
-func describe(x int) string {
+func Describe(x int) string {
 	if x < 0 {
 		return "negative"
 	} else if x == 0 {

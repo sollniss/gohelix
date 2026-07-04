@@ -1,6 +1,6 @@
 package stats
 
-func sumSquares(nums []int) int {
+func SumSquares(nums []int) int {
 	sum := 0
 	for _, n := range nums {
 		sum += n * n

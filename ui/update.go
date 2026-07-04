@@ -118,6 +118,8 @@ func (m Model) menuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.previewHScroll = 0
 		m.errMsg = ""
 		cmd = m.requestDiff()
+	case "s":
+		m.cycleSplit()
 	case "esc":
 		m.state = statePreview
 	}
@@ -133,6 +135,9 @@ func (m Model) previewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openMenu()
 	case "enter":
 		return m.startChallenge()
+	case "s":
+		// Cycle the solution split position for upcoming runs (persisted).
+		m.cycleSplit()
 	case "?":
 		m.showHint = !m.showHint
 		m.clampPreviewScroll()
@@ -231,9 +236,19 @@ func (m *Model) applyPendingScroll() {
 	}
 }
 
+// startChallenge runs helix on the current challenge. When the solution split
+// is enabled the solution opens read-only at the configured position, and the
+// run is flagged as assisted so handleComplete skips score recording.
 func (m Model) startChallenge() (tea.Model, tea.Cmd) {
 	ch := m.current()
-	r := runner.New(ch.Before)
+	pos := m.splitPos()
+	var r *runner.Runner
+	if pos.Enabled() {
+		r = runner.NewWithSolution(ch.Before, ch.After, m.splitOptions())
+	} else {
+		r = runner.New(ch.Before)
+	}
+	m.assisted = pos.Enabled()
 	return m, tea.Exec(r, func(err error) tea.Msg {
 		if err != nil {
 			return challengeErrMsg{err}
@@ -252,11 +267,14 @@ func (m Model) handleComplete(result runner.Result) (tea.Model, tea.Cmd) {
 	m.passed = result.Output == ch.After
 
 	var cmd tea.Cmd
-	if m.passed {
+	if m.passed && !m.assisted {
+		// Assisted runs had the solution on screen, so they don't count toward records.
 		m.isRecord = m.scores.Update(ch.ID, result.Keystrokes, result.Duration)
 	} else {
 		m.isRecord = false
-		cmd = m.requestDiff() // diff the failed output against the expected result
+		if !m.passed {
+			cmd = m.requestDiff() // diff the failed output against the expected result
+		}
 	}
 	return m, cmd
 }

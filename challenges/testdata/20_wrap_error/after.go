@@ -5,10 +5,10 @@ import (
 	"os"
 )
 
-func readConfig(path string) ([]byte, error) {
+func ReadConfig(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("readConfig %s: %w", path, err)
+		return nil, fmt.Errorf("ReadConfig %s: %w", path, err)
 	}
 	return data, nil
 }

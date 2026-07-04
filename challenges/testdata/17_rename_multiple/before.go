@@ -2,7 +2,7 @@ package example
 
 import "fmt"
 
-func process(items []string) {
+func Process(items []string) {
 	for i, item := range items {
 		fmt.Printf("%d: %s\n", i, item)
 	}

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func parse(line string) (string, error) {
+func Parse(line string) (string, error) {
 	if !strings.Contains(line, "=") {
 		return "", errors.New("missing separator")
 	}

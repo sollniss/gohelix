@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sollniss/gohelix/challenges"
+	"github.com/sollniss/gohelix/config"
 	"github.com/sollniss/gohelix/difft"
 	"github.com/sollniss/gohelix/runner"
 	"github.com/sollniss/gohelix/score"
@@ -54,6 +55,7 @@ type Model struct {
 	state      state
 	challenges []challenges.Challenge
 	scores     *score.Store
+	cfg        *config.Store
 	width      int
 	height     int
 
@@ -92,6 +94,7 @@ type Model struct {
 	lastResult *runner.Result
 	passed     bool
 	isRecord   bool
+	assisted   bool // last run had the solution split open (not score-eligible)
 	errMsg     string
 }
 
@@ -123,12 +126,70 @@ func newModel(chs []challenges.Challenge, perm []int) Model {
 	return Model{
 		challenges:     chs,
 		scores:         score.NewStore(),
+		cfg:            config.NewStore(),
 		state:          statePreview,
 		perm:           perm,
 		permIdx:        0,
 		diffMode:       DiffBuiltin, // bat side-by-side by default; "d" enables difft
 		difftAvailable: difft.Available(),
 	}
+}
+
+// splitPos returns the configured solution-split position (off when unset or
+// the stored value is unrecognized).
+func (m Model) splitPos() runner.SplitPos {
+	return runner.ParseSplitPos(m.cfg.Settings.SolutionSplit)
+}
+
+// peekKey returns the configured peek-toggle control byte (ctrl-t by default).
+func (m Model) peekKey() byte {
+	return runner.ParsePeekKey(m.cfg.Settings.PeekKey)
+}
+
+// splitOptions assembles the runner's split configuration from the persisted
+// settings. Unset or unparsable overrides fall back to helix defaults inside
+// the runner.
+func (m Model) splitOptions() runner.SplitOptions {
+	s := m.cfg.Settings
+	var quits []runner.QuitCommand
+	for _, q := range s.QuitCommands {
+		quits = append(quits, runner.QuitCommand{
+			Typed:  runner.ParseKeySeq(q.Typed),
+			Inject: runner.ParseKeySeq(q.Inject),
+		})
+	}
+	return runner.SplitOptions{
+		Pos:     m.splitPos(),
+		PeekKey: m.peekKey(),
+		Moves: runner.WindowMoves{
+			Left:  runner.ParseKeySeq(s.WindowMoveLeft),
+			Right: runner.ParseKeySeq(s.WindowMoveRight),
+			Up:    runner.ParseKeySeq(s.WindowMoveUp),
+			Down:  runner.ParseKeySeq(s.WindowMoveDown),
+		},
+		Quits:       quits,
+		SolutionKey: m.current().ID, // stable per-challenge solution dir
+	}
+}
+
+// cycleSplit advances the solution split through off→left→right→top→bottom→off
+// and persists the choice.
+func (m *Model) cycleSplit() {
+	order := []runner.SplitPos{runner.SplitOff, runner.SplitLeft, runner.SplitRight, runner.SplitTop, runner.SplitBottom}
+	cur := m.splitPos()
+	next := order[0]
+	for i, p := range order {
+		if p == cur {
+			next = order[(i+1)%len(order)]
+			break
+		}
+	}
+	m.setSplit(next)
+}
+
+func (m *Model) setSplit(pos runner.SplitPos) {
+	m.cfg.Settings.SolutionSplit = string(pos)
+	m.cfg.Save()
 }
 
 // current returns the challenge at the current permutation position.

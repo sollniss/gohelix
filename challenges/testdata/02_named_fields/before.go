@@ -7,7 +7,7 @@ type Server struct {
 	Timeout int
 }
 
-func newServers() []*Server {
+func NewServers() []*Server {
 	return []*Server{
 		{"localhost", 8080, true, 30},
 		{"0.0.0.0", 9090, false, 60},
