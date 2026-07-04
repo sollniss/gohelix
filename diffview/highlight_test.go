@@ -1,12 +1,36 @@
 package diffview
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sollniss/gohelix/difft"
 )
+
+func TestHighlightCachesFallback(t *testing.T) {
+	// Point the cached bat lookup at a binary that cannot run, so highlight
+	// takes the run-failure fallback (the path that used to skip the cache).
+	bat.once.Do(func() {}) // spend the Once so it can't overwrite the override
+	oldPath := bat.path
+	bat.path = filepath.Join(t.TempDir(), "missing-bat")
+	defer func() { bat.path = oldPath }()
+
+	src := "package fallback\n\tx := 1" // unique to this test; not cached elsewhere
+	highlightCache.Delete(src)
+
+	if got, want := highlight(src), expandTabs(src); got != want {
+		t.Fatalf("highlight fallback = %q, want %q", got, want)
+	}
+	v, ok := highlightCache.Load(src)
+	if !ok {
+		t.Fatal("fallback result was not cached")
+	}
+	if want := expandTabs(src); v.(string) != want {
+		t.Fatalf("cached fallback = %q, want %q", v, want)
+	}
+}
 
 func TestHighlightChanges(t *testing.T) {
 	// Plain (no ANSI) line; change span covers runes 4..7 ("bar").

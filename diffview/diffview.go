@@ -235,13 +235,19 @@ var highlightCache sync.Map // string -> string
 
 // highlight runs the given Go source through bat for syntax highlighting.
 // Returns the ANSI-colored string, or the tab-expanded plain text if bat is
-// unavailable. Results are cached, since challenge/result text is stable across
-// renders.
+// unavailable or fails.
 func highlight(src string) string {
 	if v, ok := highlightCache.Load(src); ok {
 		return v.(string)
 	}
+	result := renderHighlight(src)
+	highlightCache.Store(src, result)
+	return result
+}
 
+// renderHighlight computes what highlight caches: bat's ANSI output, or the
+// tab-expanded source when bat is missing or errors.
+func renderHighlight(src string) string {
 	bat.once.Do(func() {
 		p, err := exec.LookPath("bat")
 		if err != nil {
@@ -271,9 +277,7 @@ func highlight(src string) string {
 		return expandTabs(src) // fallback to plain text
 	}
 
-	result := strings.TrimRight(out.String(), "\n")
-	highlightCache.Store(src, result)
-	return result
+	return strings.TrimRight(out.String(), "\n")
 }
 
 const tabSpace = "    "
