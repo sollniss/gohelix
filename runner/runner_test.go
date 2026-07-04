@@ -325,8 +325,7 @@ func TestEnsureSolutionFile(t *testing.T) {
 		t.Fatalf("keys must not share a dir: %q vs %q (%v)", other, path, err)
 	}
 
-	// No cache dir available: falls back to a subdir of the run's temp dir —
-	// still separate from the challenge file at the temp dir root.
+	// No cache dir available: falls back to a subdir of the run's temp dir.
 	t.Setenv("XDG_CACHE_HOME", "")
 	t.Setenv("HOME", "")
 	fb, err := ensureSolutionFile("01_test", "package a\n", tmp)

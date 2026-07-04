@@ -52,8 +52,7 @@ const (
 	DiffDifft   DiffMode = "difft"   // difft-aligned 50/50 columns (when difft is on PATH)
 )
 
-// parseDiffMode normalizes a stored config value; anything unrecognized —
-// including the zero value of an unset setting — is the builtin view.
+// parseDiffMode normalizes a stored config value.
 func parseDiffMode(s string) DiffMode {
 	if DiffMode(strings.ToLower(strings.TrimSpace(s))) == DiffDifft {
 		return DiffDifft

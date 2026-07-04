@@ -23,10 +23,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// difft output is width-independent (gohelix lays it out and truncates at
-		// render time), so a resize needs no recompute — but it does move the
-		// scroll limits (a taller terminal lowers the vertical max, wider
-		// columns lower the horizontal one), so pull stale offsets into range.
+		// difft output is width-independent.
 		m.clampMenuScroll()
 		m.clampPreviewScroll()
 		m.clampResultScroll()

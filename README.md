@@ -1,10 +1,8 @@
 # gohelix
 
 A terminal game for practicing [Helix](https://helix-editor.com) motions. Each
-challenge gives you a `before.go` and an `after.go`. Your job is to transform one
-into the other in as few keystrokes as possible. Your best keystroke count and time are saved
-per challenge. The timer starts on your first keystroke, so launching helix and
-reading the code before you start editing are free.
+challenge gives you a `before.go` and an `after.go`; transform one into the
+other in as few keystrokes as possible.
 
 [demo](https://github.com/user-attachments/assets/30f0ebce-3a8f-4795-b95d-b534810e9697)
 
@@ -31,13 +29,60 @@ Or build from source:
 go build -o gohelix .
 ```
 
-Requires `hx` (Helix) on your `PATH`. [`bat`](https://github.com/sharkdp/bat) and
-[`difftastic`](https://difftastic.wilfred.me.uk) are optional and improve the
-diff view if present.
+Requires `hx` (Helix) on your `PATH`. Optional:
+[`bat`](https://github.com/sharkdp/bat) adds syntax highlighting,
+[`difftastic`](https://difftastic.wilfred.me.uk) adds an aligned diff view with
+change highlighting (toggle with `d`).
 
 ## Usage
 
 ```sh
-gohelix          # start a random challenge
-gohelix -c 9     # jump straight to challenge 9
+gohelix          # random challenge order (each appears once per cycle)
+gohelix -c 9     # start at challenge 9
 ```
+
+Keys:
+
+- **Preview** — `enter` start • `j/k/h/l` scroll • `d` diff view • `?` hint • `s` solution split • `esc` picker • `q` quit
+- **Picker** — `j/k` move • `enter` select • `s` solution split • `esc` back • `q` quit
+- **Result** — `r` retry • `enter` next • `j/k/h/l` scroll diff • `d` diff view • `esc` picker • `q` quit
+
+Arrow keys work wherever `j/k/h/l` do. The `d` and `s` choices persist across
+sessions.
+
+## Scoring
+
+- A challenge passes when the saved file matches `after.go` exactly; on a fail
+  the result screen diffs your output against the expected one.
+- Keystrokes count key presses: escape sequences are one press, a paste costs
+  its characters, terminal chatter (mouse, focus, query responses) is free.
+- The timer starts on your first keystroke, so launching helix and reading the
+  code first are free.
+- Best score per challenge (fewest keystrokes, ties broken by time) is saved to
+  `scores.json` in the config dir; delete the file to reset records.
+- Runs with the solution split open are not recorded.
+
+## Solution split
+
+`s` cycles a read-only copy of the solution into a helix split:
+`off`/`left`/`right`/`top`/`bottom`. During a split run the peek key
+(`ctrl-t` by default) toggles a free look at the solution — keys pressed while
+peeking don't count. Quitting with `:q`/`:wq`/`:x` (and `!` variants) closes
+the solution window automatically.
+
+## Configuration
+
+`config.json` in the config dir (`~/.config/gohelix/` on Linux). All fields
+are optional; `diff_mode` and `solution_split` are written by the in-app
+toggles.
+
+| Field | Meaning |
+|---|---|
+| `diff_mode` | diff view: `"builtin"` or `"difft"` |
+| `solution_split` | `"off"`, `"left"`, `"right"`, `"top"`, `"bottom"` |
+| `peek_key` | peek toggle for split runs, e.g. `"ctrl-t"` |
+| `window_move_left` / `_right` / `_up` / `_down` | key sequences injected to move helix window focus, for remapped window-mode keys (defaults `"ctrl-w h"` etc.) |
+| `quit_commands` | extra quit detections for remapped quits: `[{"typed": "ZZ", "inject": ":qa enter"}]` |
+
+Key sequences are space-separated tokens: `ctrl-x`, `esc`, `space`, `tab`,
+`enter`, `up`/`down`/`left`/`right`; any other token is typed literally.

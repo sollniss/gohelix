@@ -206,12 +206,7 @@ func (k *keyCounter) count(in []byte) int {
 			continue
 		}
 		// OSC/DCS/APC/PM/SOS introducers open a terminal string response
-		// (color lookups, XTVersion, ...), free until its BEL/ST terminator —
-		// which may be reads away for a long response. Only when more bytes
-		// follow in the same read, though: the introducer alone at the end of
-		// a read is how a pressed Alt-]/Alt-P arrives, and a response split
-		// exactly after its introducer effectively doesn't happen (terminals
-		// write responses in one go).
+		// (color lookups, XTVersion, ...), free until its BEL/ST terminator.
 		if buf[i] == 0x1b && i+2 < len(buf) {
 			switch buf[i+1] {
 			case ']', 'P', 'X', '^', '_':
@@ -272,8 +267,7 @@ func parseKeyEvent(b []byte) (n int, counts, incomplete bool) {
 	if len(b) == 1 {
 		// A lone Esc is the Esc key, not a sequence prefix: terminals write a
 		// key's bytes in one go, so a sequence split right after its Esc
-		// effectively doesn't happen — and holding the byte back would
-		// miscount a plain Esc press.
+		// effectively doesn't happen.
 		return 1, true, false
 	}
 	switch b[1] {
@@ -747,8 +741,7 @@ func (r *Runner) Run() error {
 	}
 
 	// Start helix in a PTY, with its working directory pinned to the challenge
-	// dir so the go.work there — not wherever gohelix was launched from —
-	// defines the LSP workspace.
+	// dir so the go.work there defines the LSP workspace.
 	cmd := exec.Command(hxPath, append([]string{"-w", tmpDir}, args...)...)
 	cmd.Env = append(os.Environ(), "COLORTERM=truecolor")
 	ptmx, err := pty.Start(cmd)

@@ -247,9 +247,7 @@ func (m Model) resultView() string {
 const resultChromeRows = 5
 
 // resultBodyRows is the diff window height in the result view. Sizing the diff
-// to fit keeps the whole view within the terminal — Bubble Tea shows the
-// BOTTOM lines of an overflowing view, which reads as "scrolled to the
-// bottom" right after a transition.
+// to fit keeps the whole view within the terminal.
 func (m Model) resultBodyRows() int {
 	return m.bodyRows(resultChromeRows, 5)
 }
