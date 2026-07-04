@@ -9,6 +9,115 @@ import (
 	"time"
 )
 
+func TestKeyCounterSplitsBatchedInput(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"single key", "j", 1},
+		{"batched typing", "jjj", 3},
+		{"arrow key", "\x1b[A", 1},
+		{"batched key repeat", strings.Repeat("\x1b[B", 10), 10},
+		{"modified key (ctrl-right)", "\x1b[1;5C", 1},
+		{"ss3 function key", "\x1bOP", 1},
+		{"alt chord", "\x1bd", 1},
+		{"bare esc", "\x1b", 1},
+		{"control byte", "\x17", 1},
+		{"enter", "\r", 1},
+		{"utf-8 rune", "ä", 1},
+		{"wide rune", "日", 1},
+		{"paste markers are free, content is not", "\x1b[200~ab\x1b[201~", 2},
+		{"alt-] alone is a chord", "\x1b]", 1},
+	}
+	for _, c := range cases {
+		var k keyCounter
+		if got := k.count([]byte(c.in)); got != c.want {
+			t.Errorf("%s: count(%q) = %d, want %d", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+func TestKeyCounterIgnoresTerminalResponses(t *testing.T) {
+	// Helix queries the terminal at startup; the responses arrive on stdin
+	// before the user has pressed anything and must not count.
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"device attributes (DA1)", "\x1b[?62;4;22c", 0},
+		{"device attributes (DA2)", "\x1b[>1;10;0c", 0},
+		{"kitty keyboard probe reply", "\x1b[?0u", 0},
+		{"mode report (DECRPM)", "\x1b[?2026;2$y", 0},
+		{"cursor position report", "\x1b[24;80R", 0},
+		{"status report", "\x1b[0n", 0},
+		{"focus in/out", "\x1b[I\x1b[O", 0},
+		{"mouse press and release", "\x1b[<0;5;3M\x1b[<0;5;3m", 0},
+		{"OSC color response (BEL)", "\x1b]11;rgb:1414/1b1b/2626\x07", 0},
+		{"OSC color response (ST)", "\x1b]10;rgb:ffff/ffff/ffff\x1b\\", 0},
+		{"DCS response (XTVersion)", "\x1bP>|kitty(0.32.2)\x1b\\", 0},
+		{"kitty-encoded key still counts", "\x1b[97;5u", 1},
+		{"startup burst then :wq", "\x1b[?62;22c\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b[I:wq\r", 4},
+	}
+	for _, c := range cases {
+		var k keyCounter
+		if got := k.count([]byte(c.in)); got != c.want {
+			t.Errorf("%s: count(%q) = %d, want %d", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+func TestKeyCounterCarriesSplitSequences(t *testing.T) {
+	// A sequence cut off by the read buffer completes on the next read.
+	var k keyCounter
+	if got := k.count([]byte("\x1b[1;5")); got != 0 {
+		t.Fatalf("partial CSI counted %d events, want 0", got)
+	}
+	if got := k.count([]byte("C")); got != 1 {
+		t.Fatalf("completed CSI counted %d events, want 1", got)
+	}
+
+	// Same for a UTF-8 rune split across reads.
+	if got := k.count([]byte{0xc3}); got != 0 {
+		t.Fatalf("partial rune counted %d events, want 0", got)
+	}
+	if got := k.count([]byte{0xa4}); got != 1 {
+		t.Fatalf("completed rune counted %d events, want 1", got)
+	}
+
+	// A paste marker split across reads still doesn't count.
+	if got := k.count([]byte("xy\x1b[20")); got != 2 {
+		t.Fatalf("content before a split marker = %d events, want 2", got)
+	}
+	if got := k.count([]byte("0~z")); got != 1 {
+		t.Fatalf("after the marker completes = %d events, want 1 (the z)", got)
+	}
+
+	// An OSC response spanning several reads stays free, even when its ST
+	// terminator is itself split.
+	if got := k.count([]byte("\x1b]11;rgb:1414")); got != 0 {
+		t.Fatalf("start of split OSC response = %d events, want 0", got)
+	}
+	if got := k.count([]byte("/1b1b/2626\x1b")); got != 0 {
+		t.Fatalf("middle of split OSC response = %d events, want 0", got)
+	}
+	if got := k.count([]byte("\\j")); got != 1 {
+		t.Fatalf("after the response terminates = %d events, want 1 (the j)", got)
+	}
+}
+
+func TestKeyCounterDropsOverlongGarbage(t *testing.T) {
+	var k keyCounter
+	in := "\x1b[" + strings.Repeat("1", 60) // never terminated; no real sequence is this long
+	if got := k.count([]byte(in)); got != 1 {
+		t.Fatalf("overlong sequence = %d events, want 1", got)
+	}
+	if got := k.count([]byte("j")); got != 1 {
+		t.Fatalf("counter must resync after garbage: got %d, want 1", got)
+	}
+}
+
 func TestEditTimerStartsOnFirstKeystroke(t *testing.T) {
 	var timer editTimer
 	base := time.Now()
@@ -318,12 +427,12 @@ func TestPeekFilterCustomToggleKey(t *testing.T) {
 	// With ctrl-g configured, ctrl-g toggles and ctrl-t is forwarded like any key.
 	f := newPeekFilter(SplitRight, ParsePeekKey("ctrl-g"), DefaultWindowMoves())
 	outs, counted := f.process([]byte{0x14})
-	if !counted || join(outs) != "\x14" || f.peeking {
-		t.Fatalf("ctrl-t must be an ordinary key here: outs=%q counted=%v peeking=%v", join(outs), counted, f.peeking)
+	if string(counted) != "\x14" || join(outs) != "\x14" || f.peeking {
+		t.Fatalf("ctrl-t must be an ordinary key here: outs=%q counted=%q peeking=%v", join(outs), counted, f.peeking)
 	}
 	outs, counted = f.process([]byte{0x07})
-	if counted || !f.peeking || len(outs) < 2 || string(outs[1]) != "\x17l" {
-		t.Fatalf("ctrl-g must toggle: outs=%q counted=%v peeking=%v", join(outs), counted, f.peeking)
+	if len(counted) > 0 || !f.peeking || len(outs) < 2 || string(outs[1]) != "\x17l" {
+		t.Fatalf("ctrl-g must toggle: outs=%q counted=%q peeking=%v", join(outs), counted, f.peeking)
 	}
 }
 
@@ -332,13 +441,13 @@ func TestPeekFilterTogglesAndCounts(t *testing.T) {
 
 	// Normal typing counts and passes through untouched.
 	outs, counted := f.process([]byte("ihello"))
-	if !counted || join(outs) != "ihello" || f.peeking {
-		t.Fatalf("plain input: outs=%q counted=%v peeking=%v", join(outs), counted, f.peeking)
+	if string(counted) != "ihello" || join(outs) != "ihello" || f.peeking {
+		t.Fatalf("plain input: outs=%q counted=%q peeking=%v", join(outs), counted, f.peeking)
 	}
 
 	// The toggle is free: Esc chunk, then the move chunk (gap between them).
 	outs, counted = f.process([]byte{peekToggle})
-	if counted || !f.peeking {
+	if len(counted) > 0 || !f.peeking {
 		t.Fatalf("toggle must be free and enter peeking")
 	}
 	if len(outs) < 2 || string(outs[0]) != "\x1b" || string(outs[1]) != "\x17l" {
@@ -347,19 +456,19 @@ func TestPeekFilterTogglesAndCounts(t *testing.T) {
 
 	// Keys while peeking are forwarded but free.
 	outs, counted = f.process([]byte("jjkl"))
-	if counted || join(outs) != "jjkl" {
-		t.Fatalf("peek navigation: outs=%q counted=%v", join(outs), counted)
+	if len(counted) > 0 || join(outs) != "jjkl" {
+		t.Fatalf("peek navigation: outs=%q counted=%q", join(outs), counted)
 	}
 
 	// Window-move and command-line keys are dropped while peeking.
 	outs, counted = f.process([]byte{0x17, ':'})
-	if counted || join(outs) != "" {
-		t.Fatalf("blocked keys leaked: outs=%q counted=%v", join(outs), counted)
+	if len(counted) > 0 || join(outs) != "" {
+		t.Fatalf("blocked keys leaked: outs=%q counted=%q", join(outs), counted)
 	}
 
 	// Toggling back is free and injects the move to the challenge.
 	outs, counted = f.process([]byte{peekToggle})
-	if counted || f.peeking {
+	if len(counted) > 0 || f.peeking {
 		t.Fatalf("exit toggle must be free and leave peeking")
 	}
 	if len(outs) < 2 || string(outs[0]) != "\x1b" || string(outs[1]) != "\x17h" {
@@ -368,8 +477,8 @@ func TestPeekFilterTogglesAndCounts(t *testing.T) {
 
 	// Counting and ':' both work again after the peek.
 	outs, counted = f.process([]byte(":wq\r"))
-	if !counted || join(outs) != ":wq\r" {
-		t.Fatalf("post-peek input: outs=%q counted=%v", join(outs), counted)
+	if string(counted) != ":wq\r" || join(outs) != ":wq\r" {
+		t.Fatalf("post-peek input: outs=%q counted=%q", join(outs), counted)
 	}
 }
 
@@ -378,8 +487,8 @@ func TestPeekFilterMixedRead(t *testing.T) {
 	// toggle still splits chunks so the Esc can't form an Alt-chord.
 	f := newPeekFilter(SplitBottom, peekToggle, DefaultWindowMoves())
 	outs, counted := f.process(append([]byte("x"), peekToggle))
-	if !counted {
-		t.Fatalf("the x before the toggle must count")
+	if string(counted) != "x" {
+		t.Fatalf("only the x before the toggle must count, got %q", counted)
 	}
 	if len(outs) < 2 || string(outs[0]) != "x\x1b" || string(outs[1]) != "\x17j" {
 		t.Fatalf("chunks = %q", outs)

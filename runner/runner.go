@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 	"github.com/muesli/cancelreader"
@@ -158,7 +159,189 @@ func parseCtrlToken(tok string) (byte, bool) {
 	return 0, false
 }
 
-// editTimer measures editing time. Yhe clock starts on the first counted keystroke
+// keyCounter splits the counted input stream into key events.
+type keyCounter struct {
+	pending  []byte // incomplete escape sequence or rune from the previous read
+	inString bool   // inside an OSC/DCS-style string, skipping to its terminator
+}
+
+// Bracketed-paste markers (mode 2004): sent by the terminal around pasted
+// text, never pressed by the user, so they don't count. The pasted content
+// between them does.
+var (
+	pasteStart = []byte("\x1b[200~")
+	pasteEnd   = []byte("\x1b[201~")
+)
+
+// maxPending bounds the carried partial sequence. Real terminal sequences are
+// far shorter; anything longer is counted as one garbage event and dropped so
+// a malformed stream can't wedge the counter.
+const maxPending = 32
+
+// count returns the number of key events in in, resuming any partial sequence
+// carried from the previous read.
+func (k *keyCounter) count(in []byte) int {
+	if len(in) == 0 {
+		return 0
+	}
+	buf := in
+	if len(k.pending) > 0 {
+		buf = append(k.pending, in...)
+		k.pending = nil
+	}
+	events := 0
+	for i := 0; i < len(buf); {
+		if k.inString {
+			n, closed := skipString(buf[i:])
+			i += n
+			if !closed {
+				// An unterminated string may end in a lone Esc that is the
+				// first half of a split ST; carry it into the next read.
+				if i < len(buf) {
+					k.pending = append([]byte(nil), buf[i:]...)
+				}
+				return events
+			}
+			k.inString = false
+			continue
+		}
+		// OSC/DCS/APC/PM/SOS introducers open a terminal string response
+		// (color lookups, XTVersion, ...), free until its BEL/ST terminator —
+		// which may be reads away for a long response. Only when more bytes
+		// follow in the same read, though: the introducer alone at the end of
+		// a read is how a pressed Alt-]/Alt-P arrives, and a response split
+		// exactly after its introducer effectively doesn't happen (terminals
+		// write responses in one go).
+		if buf[i] == 0x1b && i+2 < len(buf) {
+			switch buf[i+1] {
+			case ']', 'P', 'X', '^', '_':
+				k.inString = true
+				i += 2
+				continue
+			}
+		}
+		n, counts, incomplete := parseKeyEvent(buf[i:])
+		if incomplete {
+			if len(buf)-i > maxPending {
+				events++ // garbage, not a key sequence: one event, dropped
+			} else {
+				k.pending = append([]byte(nil), buf[i:]...)
+			}
+			break
+		}
+		if counts {
+			events++
+		}
+		i += n
+	}
+	return events
+}
+
+// skipString advances through an OSC/DCS-style string until its BEL or ST
+// (Esc \) terminator, returning the bytes consumed and whether the terminator
+// was found. A trailing lone Esc is left unconsumed so a split ST can
+// complete on the next read.
+func skipString(b []byte) (n int, closed bool) {
+	for j := 0; j < len(b); j++ {
+		switch b[j] {
+		case 0x07: // BEL
+			return j + 1, true
+		case 0x1b:
+			if j+1 >= len(b) {
+				return j, false // possible first half of a split ST
+			}
+			if b[j+1] == '\\' {
+				return j + 2, true
+			}
+		}
+	}
+	return len(b), false
+}
+
+// parseKeyEvent reports the byte length of the first key event in b and
+// whether it counts as a keystroke. incomplete means b ends before the event
+// does (a sequence or rune cut off at the read boundary).
+func parseKeyEvent(b []byte) (n int, counts, incomplete bool) {
+	if b[0] != 0x1b {
+		if !utf8.FullRune(b) {
+			return 0, false, true // rune cut off at the read boundary
+		}
+		_, size := utf8.DecodeRune(b)
+		return size, true, false
+	}
+	if len(b) == 1 {
+		// A lone Esc is the Esc key, not a sequence prefix: terminals write a
+		// key's bytes in one go, so a sequence split right after its Esc
+		// effectively doesn't happen — and holding the byte back would
+		// miscount a plain Esc press.
+		return 1, true, false
+	}
+	switch b[1] {
+	case '[': // CSI: \x1b[ params(0x30–0x3f) intermediates(0x20–0x2f) final(0x40–0x7e)
+		i := 2
+		for i < len(b) && b[i] >= 0x30 && b[i] <= 0x3f {
+			i++
+		}
+		for i < len(b) && b[i] >= 0x20 && b[i] <= 0x2f {
+			i++
+		}
+		if i == len(b) {
+			return 0, false, true // final byte not read yet
+		}
+		if b[i] < 0x40 || b[i] > 0x7e {
+			// No valid final byte: count the malformed introducer as one
+			// event and resync at the offending byte.
+			return i, true, false
+		}
+		seq := b[:i+1]
+		if bytes.Equal(seq, pasteStart) || bytes.Equal(seq, pasteEnd) {
+			return i + 1, false, false
+		}
+		return i + 1, csiIsKey(b[2:i], b[i]), false
+	case 'O': // SS3, e.g. F1–F4: \x1bO + one byte
+		if len(b) == 2 {
+			return 0, false, true
+		}
+		return 3, true, false
+	default:
+		// Esc + rune in the same read: an Alt-chord, one key press.
+		if !utf8.FullRune(b[1:]) {
+			return 0, false, true
+		}
+		_, size := utf8.DecodeRune(b[1:])
+		return 1 + size, true, false
+	}
+}
+
+// csiIsKey reports whether a CSI sequence (params+intermediates, final byte)
+// is a key press. The terminal interleaves reports and events the user never
+// pressed with the real keys:
+//   - '?'/'>'/'='-prefixed params are responses to helix's startup queries
+//     (device attributes, DECRPM mode reports, kitty-protocol probes)
+//   - '<'-prefixed params are SGR mouse events (helix enables the mouse);
+//     clicking and scrolling aren't keystrokes
+//   - bare I/O finals are focus in/out events
+//   - R/n/c/t/y finals are cursor-position, status, attribute and window
+//     reports. Excluding R sacrifices modified-F3 (same encoding as a
+//     cursor-position report, indistinguishable), which no helix motion uses;
+//     plain F3 arrives as SS3 and still counts.
+func csiIsKey(params []byte, final byte) bool {
+	if len(params) > 0 {
+		switch params[0] {
+		case '?', '>', '=', '<':
+			return false
+		}
+	}
+	switch final {
+	case 'R', 'n', 'c', 't', 'y':
+		return false
+	case 'I', 'O':
+		return len(params) > 0
+	}
+	return true
+}
+
+// editTimer measures editing time. The clock starts on the first counted keystroke
 // rather than at editor launch.
 // Keystrokes that don't count toward the score don't start it either.
 type editTimer struct {
@@ -347,10 +530,11 @@ func newPeekFilter(pos SplitPos, toggle byte, mv WindowMoves) *peekFilter {
 }
 
 // process consumes one stdin read and returns the chunks to forward to the pty
-// and whether the read counts as a keystroke. The writer must pause escGap
-// between chunks: a chunk boundary is only emitted after an injected Esc, which
-// must not be parsed as an Alt-chord with the bytes that follow.
-func (f *peekFilter) process(in []byte) (outs [][]byte, counted bool) {
+// and the bytes that count toward the keystroke score (those typed while not
+// peeking; the toggle and the injected moves are free). The writer must pause
+// escGap between chunks: a chunk boundary is only emitted after an injected
+// Esc, which must not be parsed as an Alt-chord with the bytes that follow.
+func (f *peekFilter) process(in []byte) (outs [][]byte, counted []byte) {
 	cur := []byte{}
 	for _, b := range in {
 		switch {
@@ -374,7 +558,7 @@ func (f *peekFilter) process(in []byte) (outs [][]byte, counted bool) {
 		default:
 			cur = append(cur, b)
 			if !f.peeking {
-				counted = true
+				counted = append(counted, b)
 			}
 		}
 	}
@@ -637,7 +821,7 @@ func (r *Runner) Run() error {
 		}()
 	}
 
-	// Proxy terminal stdin → PTY input, counting each read as a keystroke.
+	// Proxy terminal stdin → PTY input, counting the key presses it carries.
 	// A cancelable reader lets us stop this goroutine the instant helix exits.
 	stdin, err := cancelreader.NewReader(os.Stdin)
 	if err != nil {
@@ -650,6 +834,7 @@ func (r *Runner) Run() error {
 	go func() {
 		defer close(inputDone)
 		buf := make([]byte, 256)
+		var keys keyCounter
 		var filter *peekFilter
 		var quits *quitDetector
 		if splitting {
@@ -659,12 +844,12 @@ func (r *Runner) Run() error {
 		for {
 			n, readErr := stdin.Read(buf)
 			if n > 0 {
-				outs, counted := [][]byte{buf[:n]}, true
+				outs, countable := [][]byte{buf[:n]}, buf[:n]
 				if filter != nil {
-					outs, counted = filter.process(buf[:n])
+					outs, countable = filter.process(buf[:n])
 				}
-				if counted {
-					keystrokes.Add(1)
+				if events := keys.count(countable); events > 0 {
+					keystrokes.Add(int64(events))
 					timer.keystroke(time.Now())
 				}
 				for i, out := range outs {
