@@ -72,6 +72,12 @@ func startupDiffMode(stored string, difftAvailable bool) DiffMode {
 	return DiffBuiltin
 }
 
+// scroll is a 2D viewport offset for a scrollable code/diff body: y is the
+// top visible body row, x the horizontal cell offset.
+type scroll struct {
+	y, x int
+}
+
 // Model is the main bubbletea model.
 type Model struct {
 	state      state
@@ -89,11 +95,13 @@ type Model struct {
 	menuCursor int
 	menuScroll int
 
-	showHint       bool
-	previewScroll  int          // vertical scroll offset for the preview code area
-	previewHScroll int          // horizontal scroll offset for the preview code area
-	resultScroll   int          // vertical scroll offset for the result diff
-	resultHScroll  int          // horizontal scroll offset for the result diff
+	showHint bool
+
+	// Scroll offsets. The preview and result keep separate offsets on purpose:
+	// retrying a challenge returns to the preview exactly where it was left.
+	previewScroll scroll // preview code area
+	resultScroll  scroll // result diff
+
 	diffMode       DiffMode     // current active mode
 	difftAvailable bool         // whether difft is on PATH
 	difftResult    difft.Result // parsed difft alignment for the current context
@@ -283,6 +291,5 @@ func (m *Model) advance() {
 		m.reshuffle()
 	}
 	m.showHint = false
-	m.previewScroll = 0
-	m.previewHScroll = 0
+	m.previewScroll = scroll{}
 }

@@ -24,8 +24,8 @@ func TestPreviewHScrollStopsAtWidestLine(t *testing.T) {
 	for range 10 {
 		tm, _ = tm.Update(keyL)
 	}
-	if got := tm.(Model).previewHScroll; got != 10 {
-		t.Fatalf("previewHScroll = %d, want clamped to 10", got)
+	if got := tm.(Model).previewScroll.x; got != 10 {
+		t.Fatalf("previewScroll.x = %d, want clamped to 10", got)
 	}
 
 	// Scrolling back reaches 0 in three presses (10 → 6 → 2 → 0), instead of
@@ -33,8 +33,8 @@ func TestPreviewHScrollStopsAtWidestLine(t *testing.T) {
 	for range 3 {
 		tm, _ = tm.Update(keyH)
 	}
-	if got := tm.(Model).previewHScroll; got != 0 {
-		t.Fatalf("previewHScroll after scrolling back = %d, want 0", got)
+	if got := tm.(Model).previewScroll.x; got != 0 {
+		t.Fatalf("previewScroll.x after scrolling back = %d, want 0", got)
 	}
 }
 
@@ -49,8 +49,8 @@ func TestResultHScrollStopsAtWidestLine(t *testing.T) {
 	for range 10 {
 		tm, _ = tm.Update(keyL)
 	}
-	if got := tm.(Model).resultHScroll; got != 10 {
-		t.Fatalf("resultHScroll = %d, want clamped to 10", got)
+	if got := tm.(Model).resultScroll.x; got != 10 {
+		t.Fatalf("resultScroll.x = %d, want clamped to 10", got)
 	}
 }
 
@@ -63,7 +63,7 @@ func TestResultHScrollStaysZeroWhenPassed(t *testing.T) {
 	m.lastResult = &runner.Result{Output: strings.Repeat("x", 30) + "\n"}
 
 	tm, _ := tea.Model(m).Update(keyL)
-	if got := tm.(Model).resultHScroll; got != 0 {
-		t.Fatalf("resultHScroll = %d, want 0 on a passed result", got)
+	if got := tm.(Model).resultScroll.x; got != 0 {
+		t.Fatalf("resultScroll.x = %d, want 0 on a passed result", got)
 	}
 }

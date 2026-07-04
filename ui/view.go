@@ -81,13 +81,28 @@ func (m Model) menuView() string {
 	return b.String()
 }
 
+// Layout accounting.
+const (
+	// footerRows is the help line plus the blank margin helpStyle.MarginTop(1)
+	// renders above it.
+	footerRows = 2
+	// outerPadRows is View's Padding(1, 2): one row above, one below.
+	outerPadRows = 2
+)
+
+// bodyRows returns the rows available to a scrollable body, given the chrome
+// rows around it (everything between the outer padding and the footer that
+// isn't body). floor keeps a few body rows visible on tiny terminals; View's
+// height clamp keeps the top of the screen visible then.
+func (m Model) bodyRows(chrome, floor int) int {
+	return max(m.height-chrome-footerRows-outerPadRows, floor)
+}
+
 // menuVisibleRows is the number of challenge rows that fit between the sticky
 // header and footer.
 func (m Model) menuVisibleRows() int {
 	header := titleStyle.Render(menuTitle) + "\n\n"
-	headerLines := strings.Count(header, "\n")
-	footerLines := 2 // margin + footer line
-	return max(m.height-headerLines-footerLines-2, 1)
+	return m.bodyRows(strings.Count(header, "\n"), 1)
 }
 
 // previewHeader renders the title/hint/score block shown above the diff body.
@@ -135,40 +150,33 @@ func (m Model) previewView() string {
 	var bodyStr string
 	r := diffview.Renderer{Width: m.width}
 	if m.diffMode == DiffDifft {
-		bodyStr = r.Difft("Before:", "After:", ch.Before, ch.After, m.previewHScroll, m.difftResult)
+		bodyStr = r.Difft("Before:", "After:", ch.Before, ch.After, m.previewScroll.x, m.difftResult)
 	} else {
-		bodyStr = r.Builtin("Before:", "After:", ch.Before, ch.After, m.previewHScroll)
+		bodyStr = r.Builtin("Before:", "After:", ch.Before, ch.After, m.previewScroll.x)
 	}
 
-	// Compose with scrolling
+	// Compose with scrolling. The window and its limit come from the same
+	// accounting the key handlers clamp with (previewBodyRows/maxPreviewScroll),
+	// so the indicator, the clamp and the rendered slice can't disagree.
 	headerStr := m.previewHeader()
-
-	headerLines := strings.Count(headerStr, "\n")
-	footerLines := 2 // margin + footer line
-
-	// Available height for the code body (account for outer padding: 1 top + 1 bottom)
-	available := max(m.height-headerLines-footerLines-2, 3)
+	available := m.previewBodyRows()
+	maxScroll := m.maxPreviewScroll()
 
 	bodyLines := strings.Split(bodyStr, "\n")
-
-	// Clamp scroll offset
-	maxScroll := max(len(bodyLines)-available, 0)
-	scroll := min(m.previewScroll, maxScroll)
-
-	// Slice the visible portion
-	end := min(scroll+available, len(bodyLines))
-	visibleBody := strings.Join(bodyLines[scroll:end], "\n")
+	top := min(m.previewScroll.y, maxScroll, len(bodyLines))
+	end := min(top+available, len(bodyLines))
+	visibleBody := strings.Join(bodyLines[top:end], "\n")
 
 	// Scroll indicator
 	scrollHint := ""
 	if maxScroll > 0 {
-		scrollHint = dimStyle.Render(fmt.Sprintf(" [%d/%d]", scroll, maxScroll))
+		scrollHint = dimStyle.Render(fmt.Sprintf(" [%d/%d]", top, maxScroll))
 	}
 
 	var result strings.Builder
 	result.WriteString(headerStr)
 	result.WriteString(visibleBody)
-	result.WriteString("\n") // helpStyle.MarginTop(1) supplies the blank line above the footer
+	result.WriteString("\n")
 	result.WriteString(footer)
 	result.WriteString(scrollHint)
 
@@ -182,7 +190,7 @@ func (m Model) resultView() string {
 		b.WriteString(failStyle.Render("✗ Error"))
 		b.WriteString("\n\n")
 		b.WriteString(normalStyle.Render(m.errMsg))
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("r retry • esc pick challenge • q quit"))
 		return b.String()
 	}
@@ -218,7 +226,8 @@ func (m Model) resultView() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
+	// No explicit blank here: helpStyle.MarginTop(1) supplies the one blank
+	// line above the footer, same as the preview and menu.
 	footer := "r retry • enter next • esc pick challenge • q quit"
 	if !m.passed {
 		diffToggle := ""
@@ -232,16 +241,23 @@ func (m Model) resultView() string {
 	return b.String()
 }
 
-// resultDiffAvailable is the diff window height in the result view: the
-// terminal height minus the chrome around the diff (status, blank, two stat
-// lines, blank above the diff, blank after it, the footer's top margin and
-// the footer itself = 8 rows) and the outer padding (2 rows). Sizing the diff
-// this way keeps the whole view within the terminal — Bubble Tea shows the
+// resultChromeRows is what surrounds the result diff besides the footer and
+// padding: the status line, a blank, the two stat lines and a blank above the
+// diff.
+const resultChromeRows = 5
+
+// resultBodyRows is the diff window height in the result view. Sizing the diff
+// to fit keeps the whole view within the terminal — Bubble Tea shows the
 // BOTTOM lines of an overflowing view, which reads as "scrolled to the
-// bottom" right after a transition. The floor keeps a few diff lines visible
-// on tiny terminals; View's clamp keeps the top on screen then.
-func (m Model) resultDiffAvailable() int {
-	return max(m.height-10, 5)
+// bottom" right after a transition.
+func (m Model) resultBodyRows() int {
+	return m.bodyRows(resultChromeRows, 5)
+}
+
+// previewBodyRows is the diff window height in the preview: what is left after
+// the header block (title, optional hint, optional best score).
+func (m Model) previewBodyRows() int {
+	return m.bodyRows(strings.Count(m.previewHeader(), "\n"), 3)
 }
 
 // resultDiffView renders a scrollable side-by-side comparison of the user's output vs expected.
@@ -251,20 +267,18 @@ func (m Model) resultDiffView() string {
 	var bodyStr string
 	r := diffview.Renderer{Width: m.width}
 	if m.diffMode == DiffDifft {
-		bodyStr = r.Difft("Your Solution:", "Expected:", m.lastResult.Output, ch.After, m.resultHScroll, m.difftResult)
+		bodyStr = r.Difft("Your Solution:", "Expected:", m.lastResult.Output, ch.After, m.resultScroll.x, m.difftResult)
 	} else {
-		bodyStr = r.Builtin("Your Solution:", "Expected:", m.lastResult.Output, ch.After, m.resultHScroll)
+		bodyStr = r.Builtin("Your Solution:", "Expected:", m.lastResult.Output, ch.After, m.resultScroll.x)
 	}
 
-	// Apply vertical scroll
+	// Same accounting as the key handlers' clamp, so the visible window and
+	// the scroll limits agree.
 	bodyLines := strings.Split(bodyStr, "\n")
+	top := min(m.resultScroll.y, m.maxResultScroll(), len(bodyLines))
+	end := min(top+m.resultBodyRows(), len(bodyLines))
 
-	available := m.resultDiffAvailable()
-	maxScroll := max(len(bodyLines)-available, 0)
-	scroll := min(m.resultScroll, maxScroll)
-	end := min(scroll+available, len(bodyLines))
-
-	return strings.Join(bodyLines[scroll:end], "\n")
+	return strings.Join(bodyLines[top:end], "\n")
 }
 
 // diffBodyLines reports how many lines the diff body renders for the given
@@ -278,53 +292,46 @@ func (m Model) diffBodyLines(left, right string) int {
 	return diffHeaderRows + max(leftLines, rightLines) + 1
 }
 
-// maxPreviewScroll computes the maximum scroll offset for the current challenge.
+// maxPreviewScroll is the largest top offset for the preview diff.
 func (m Model) maxPreviewScroll() int {
 	ch := m.current()
-
-	headerLines := strings.Count(m.previewHeader(), "\n")
-	totalBody := m.diffBodyLines(ch.Before, ch.After)
-
-	footerHeight := 2                                        // blank line + help text
-	available := max(m.height-headerLines-footerHeight-2, 3) // outer padding
-
-	return max(totalBody-available, 0)
+	return max(m.diffBodyLines(ch.Before, ch.After)-m.previewBodyRows(), 0)
 }
 
-// clampPreviewScroll ensures previewScroll doesn't exceed the maximum.
-func (m *Model) clampPreviewScroll() {
-	m.previewScroll = min(m.previewScroll, m.maxPreviewScroll())
-}
-
-// clampResultScroll ensures resultScroll doesn't exceed the maximum.
-func (m *Model) clampResultScroll() {
+// maxResultScroll is the largest top offset for the result diff: zero when
+// there is nothing to scroll (no result yet, or a passed run shows no diff).
+func (m Model) maxResultScroll() int {
 	if m.lastResult == nil || m.passed {
-		m.resultScroll = 0
-		return
+		return 0
 	}
-	totalBody := m.diffBodyLines(m.lastResult.Output, m.current().After)
-	available := m.resultDiffAvailable()
-	maxScroll := max(totalBody-available, 0)
-	m.resultScroll = min(m.resultScroll, maxScroll)
+	return max(m.diffBodyLines(m.lastResult.Output, m.current().After)-m.resultBodyRows(), 0)
 }
 
-// clampPreviewHScroll ensures previewHScroll doesn't scroll past the widest
-// preview line into blank space.
-func (m *Model) clampPreviewHScroll() {
+// maxPreviewHScroll bounds horizontal scrolling to the widest preview line.
+func (m Model) maxPreviewHScroll() int {
 	ch := m.current()
-	r := diffview.Renderer{Width: m.width}
-	m.previewHScroll = min(m.previewHScroll, r.MaxHScroll(ch.Before, ch.After))
+	return diffview.Renderer{Width: m.width}.MaxHScroll(ch.Before, ch.After)
 }
 
-// clampResultHScroll ensures resultHScroll doesn't scroll past the widest
-// result-diff line into blank space.
-func (m *Model) clampResultHScroll() {
+// maxResultHScroll bounds horizontal scrolling to the widest result-diff line.
+func (m Model) maxResultHScroll() int {
 	if m.lastResult == nil || m.passed {
-		m.resultHScroll = 0
-		return
+		return 0
 	}
-	r := diffview.Renderer{Width: m.width}
-	m.resultHScroll = min(m.resultHScroll, r.MaxHScroll(m.lastResult.Output, m.current().After))
+	return diffview.Renderer{Width: m.width}.MaxHScroll(m.lastResult.Output, m.current().After)
+}
+
+// clampPreviewScroll pulls the preview offsets back into range after a limit
+// shrank (hint toggled, diff mode toggled, resize).
+func (m *Model) clampPreviewScroll() {
+	m.previewScroll.y = min(m.previewScroll.y, m.maxPreviewScroll())
+	m.previewScroll.x = min(m.previewScroll.x, m.maxPreviewHScroll())
+}
+
+// clampResultScroll is clampPreviewScroll for the result diff.
+func (m *Model) clampResultScroll() {
+	m.resultScroll.y = min(m.resultScroll.y, m.maxResultScroll())
+	m.resultScroll.x = min(m.resultScroll.x, m.maxResultHScroll())
 }
 
 // diffHeaderRows is the number of rows (column labels + top rule) the diff body

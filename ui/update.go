@@ -24,12 +24,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		// difft output is width-independent (gohelix lays it out and truncates at
-		// render time), so a resize needs no recompute.
-		m.clampMenuScroll() // the menu window depends on height
-		// A wider terminal widens the columns, lowering the max horizontal
-		// offset; pull any stale offset back into range.
-		m.clampPreviewHScroll()
-		m.clampResultHScroll()
+		// render time), so a resize needs no recompute — but it does move the
+		// scroll limits (a taller terminal lowers the vertical max, wider
+		// columns lower the horizontal one), so pull stale offsets into range.
+		m.clampMenuScroll()
+		m.clampPreviewScroll()
+		m.clampResultScroll()
 		return m, nil
 	case requestDiffMsg:
 		return m, m.requestDiff()
@@ -120,8 +120,7 @@ func (m Model) menuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.permIdx = 0
 		m.state = statePreview
 		m.showHint = false
-		m.previewScroll = 0
-		m.previewHScroll = 0
+		m.previewScroll = scroll{}
 		m.errMsg = ""
 		cmd = m.requestDiff()
 	case "s":
@@ -130,6 +129,25 @@ func (m Model) menuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = statePreview
 	}
 	return m, cmd
+}
+
+// hScrollStep is how many cells one h/l press shifts the diff columns.
+const hScrollStep = 4
+
+// scrollKeys applies the j/k/h/l (and arrow-key) scrolling bindings shared by
+// the preview and result views, bounding the offsets to [0, maxY] and
+// [0, maxX]. Non-scrolling keys are ignored.
+func scrollKeys(msg tea.KeyMsg, sc *scroll, maxY, maxX int) {
+	switch msg.String() {
+	case "j", "down":
+		sc.y = min(sc.y+1, maxY)
+	case "k", "up":
+		sc.y = max(sc.y-1, 0)
+	case "l", "right":
+		sc.x = min(sc.x+hScrollStep, maxX)
+	case "h", "left":
+		sc.x = max(sc.x-hScrollStep, 0)
+	}
 }
 
 func (m Model) previewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -148,22 +166,9 @@ func (m Model) previewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHint = !m.showHint
 		m.clampPreviewScroll()
 	case "d":
-		cmd = m.toggleScroll(&m.previewScroll, m.clampPreviewScroll)
-	case "j", "down":
-		m.previewScroll++
-		m.clampPreviewScroll()
-	case "k", "up":
-		if m.previewScroll > 0 {
-			m.previewScroll--
-		}
-	case "l", "right":
-		m.previewHScroll += 4
-		m.clampPreviewHScroll()
-	case "h", "left":
-		m.previewHScroll -= 4
-		if m.previewHScroll < 0 {
-			m.previewHScroll = 0
-		}
+		cmd = m.toggleScroll(&m.previewScroll.y, m.clampPreviewScroll)
+	default:
+		scrollKeys(msg, &m.previewScroll, m.maxPreviewScroll(), m.maxPreviewHScroll())
 	}
 	return m, cmd
 }
@@ -184,47 +189,34 @@ func (m Model) resultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.advance()
 		m.state = statePreview
 		cmd = m.requestDiff()
-	case "j", "down":
-		m.resultScroll++
-		m.clampResultScroll()
-	case "k", "up":
-		if m.resultScroll > 0 {
-			m.resultScroll--
-		}
-	case "l", "right":
-		m.resultHScroll += 4
-		m.clampResultHScroll()
-	case "h", "left":
-		m.resultHScroll -= 4
-		if m.resultHScroll < 0 {
-			m.resultHScroll = 0
-		}
 	case "d":
-		cmd = m.toggleScroll(&m.resultScroll, m.clampResultScroll)
+		cmd = m.toggleScroll(&m.resultScroll.y, m.clampResultScroll)
+	default:
+		scrollKeys(msg, &m.resultScroll, m.maxResultScroll(), m.maxResultHScroll())
 	}
 	return m, cmd
 }
 
 // toggleScroll switches the diff mode while keeping the left source line at the
-// top of the viewport pinned in place, instead of jumping back to the top. scroll
+// top of the viewport pinned in place, instead of jumping back to the top. y
 // points at the active view's vertical offset and clamp bounds it afterwards.
 //
 // difft→builtin resolves immediately (the builtin layout is positional). builtin→
 // difft can't: the alignment is computed asynchronously, so the anchor is stored
 // against the new request's seq and applied in applyPendingScroll when it lands.
-func (m *Model) toggleScroll(scroll *int, clamp func()) tea.Cmd {
+func (m *Model) toggleScroll(y *int, clamp func()) tea.Cmd {
 	// At the very top the diff header (labels + rule) is visible and identical in
 	// both modes, so the offset needs no translation.
-	if *scroll < diffHeaderRows {
+	if *y < diffHeaderRows {
 		return m.toggleDiffMode()
 	}
-	anchor := scrollToLeftLine(m.diffMode, m.difftResult.Rows, *scroll)
+	anchor := scrollToLeftLine(m.diffMode, m.difftResult.Rows, *y)
 	cmd := m.toggleDiffMode()
 	if m.diffMode == DiffDifft {
 		m.pendingScrollLine = anchor
 		m.pendingScrollSeq = m.diffSeq
 	} else {
-		*scroll = leftLineToScroll(m.diffMode, m.difftResult.Rows, anchor)
+		*y = leftLineToScroll(m.diffMode, m.difftResult.Rows, anchor)
 		clamp()
 	}
 	return cmd
@@ -233,13 +225,13 @@ func (m *Model) toggleScroll(scroll *int, clamp func()) tea.Cmd {
 // applyPendingScroll pins the anchored left source line to the top of the active
 // view once a difft alignment has arrived.
 func (m *Model) applyPendingScroll() {
-	scroll := leftLineToScroll(m.diffMode, m.difftResult.Rows, m.pendingScrollLine)
+	y := leftLineToScroll(m.diffMode, m.difftResult.Rows, m.pendingScrollLine)
 	switch m.state {
 	case statePreview:
-		m.previewScroll = scroll
+		m.previewScroll.y = y
 		m.clampPreviewScroll()
 	case stateResult:
-		m.resultScroll = scroll
+		m.resultScroll.y = y
 		m.clampResultScroll()
 	}
 }
@@ -269,8 +261,7 @@ func (m Model) handleComplete(result runner.Result) (tea.Model, tea.Cmd) {
 	m.state = stateResult
 	m.lastResult = &result
 	m.errMsg = ""
-	m.resultScroll = 0
-	m.resultHScroll = 0
+	m.resultScroll = scroll{}
 	ch := m.current()
 	m.passed = result.Output == ch.After
 

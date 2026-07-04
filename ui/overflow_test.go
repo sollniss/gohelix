@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sollniss/gohelix/runner"
 )
 
@@ -28,6 +29,42 @@ func TestResultViewFitsTerminalHeight(t *testing.T) {
 		if got+2 > h { // +2 for the outer Padding(1,2) rows added in View
 			t.Errorf("height=%d: result view is %d lines (+2 padding), want <= %d", h, got, h)
 		}
+	}
+}
+
+// footerGap counts the consecutive blank rows immediately above the row
+// containing marker (the help line).
+func footerGap(t *testing.T, view, marker string) int {
+	t.Helper()
+	lines := strings.Split(ansi.Strip(view), "\n")
+	idx := -1
+	for i, l := range lines {
+		if strings.Contains(l, marker) {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("marker %q not found in view:\n%s", marker, view)
+	}
+	gap := 0
+	for i := idx - 1; i >= 0 && strings.TrimSpace(lines[i]) == ""; i-- {
+		gap++
+	}
+	return gap
+}
+
+func TestFooterGapIsOneBlankRowInPreviewAndResult(t *testing.T) {
+	// helpStyle.MarginTop(1) alone supplies the gap above the footer; neither
+	// view adds its own blank on top of it. (The menu is excluded: it pads its
+	// list to a fixed height, so its gap is by design not content-flush.)
+	m := tallResultModel(t, 80, 24) // failed result: diff flush above the footer
+	if got := footerGap(t, m.resultView(), "r retry"); got != 1 {
+		t.Errorf("result footer gap = %d blank rows, want 1", got)
+	}
+
+	m.state = statePreview
+	if got := footerGap(t, m.previewView(), "enter start"); got != 1 {
+		t.Errorf("preview footer gap = %d blank rows, want 1", got)
 	}
 }
 
