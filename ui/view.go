@@ -213,10 +213,6 @@ func (m Model) resultView() string {
 		b.WriteString("\n")
 		b.WriteString(recordStyle.Render("  🏆 New Record!"))
 		b.WriteString("\n")
-	} else if m.passed && m.assisted {
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  (solution was open — not recorded)"))
-		b.WriteString("\n")
 	}
 
 	// Show diff when failed

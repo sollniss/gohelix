@@ -234,18 +234,15 @@ func (m *Model) applyPendingScroll() {
 }
 
 // startChallenge runs helix on the current challenge. When the solution split
-// is enabled the solution opens read-only at the configured position, and the
-// run is flagged as assisted so handleComplete skips score recording.
+// is enabled the solution opens read-only at the configured position.
 func (m Model) startChallenge() (tea.Model, tea.Cmd) {
 	ch := m.current()
-	pos := m.splitPos()
 	var r *runner.Runner
-	if pos.Enabled() {
+	if m.splitPos().Enabled() {
 		r = runner.NewWithSolution(ch.Before, ch.After, m.splitOptions())
 	} else {
 		r = runner.New(ch.Before)
 	}
-	m.assisted = pos.Enabled()
 	return m, tea.Exec(r, func(err error) tea.Msg {
 		if err != nil {
 			return challengeErrMsg{err}
@@ -263,14 +260,11 @@ func (m Model) handleComplete(result runner.Result) (tea.Model, tea.Cmd) {
 	m.passed = result.Output == ch.After
 
 	var cmd tea.Cmd
-	if m.passed && !m.assisted {
-		// Assisted runs had the solution on screen, so they don't count toward records.
+	if m.passed {
 		m.isRecord = m.scores.Update(ch.ID, result.Keystrokes, result.Duration)
 	} else {
 		m.isRecord = false
-		if !m.passed {
-			cmd = m.requestDiff() // diff the failed output against the expected result
-		}
+		cmd = m.requestDiff() // diff the failed output against the expected result
 	}
 	return m, cmd
 }

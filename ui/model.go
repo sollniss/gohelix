@@ -118,7 +118,6 @@ type Model struct {
 	lastResult *runner.Result
 	passed     bool
 	isRecord   bool
-	assisted   bool // last run had the solution split open (not score-eligible)
 	errMsg     string
 }
 

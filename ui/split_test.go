@@ -88,21 +88,22 @@ func TestSplitOptionsCarryChallengeID(t *testing.T) {
 	}
 }
 
-func TestSplitEnabledRunsAreAssisted(t *testing.T) {
+func TestSplitRunsRecordScores(t *testing.T) {
+	// The split is a normal feature: a passed run records its score whether
+	// or not the solution was open.
 	m := newTestModel(t)
 	m.setSplit(runner.SplitLeft)
 
-	updated, cmd := m.startChallenge()
-	if cmd == nil {
+	if _, cmd := m.startChallenge(); cmd == nil {
 		t.Fatalf("startChallenge should return an exec command")
 	}
-	if !updated.(Model).assisted {
-		t.Fatalf("run with split enabled must be flagged assisted")
-	}
 
-	m.setSplit(runner.SplitOff)
-	updated, _ = m.startChallenge()
-	if updated.(Model).assisted {
-		t.Fatalf("run with split off must not be flagged assisted")
+	tm, _ := tea.Model(m).Update(challengeCompleteMsg{result: runner.Result{Output: "b"}})
+	res := tm.(Model)
+	if !res.passed || !res.isRecord {
+		t.Fatalf("passed = %v, isRecord = %v; a passed split run must set a record", res.passed, res.isRecord)
+	}
+	if _, ok := res.scores.Get("x"); !ok {
+		t.Fatalf("score must be persisted with the split enabled")
 	}
 }
