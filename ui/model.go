@@ -2,6 +2,7 @@ package ui
 
 import (
 	"math/rand/v2"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sollniss/gohelix/challenges"
@@ -42,13 +43,34 @@ type diffReadyMsg struct {
 	aligned *difft.Result
 }
 
-// DiffMode controls how diffs are displayed.
-type DiffMode int
+// DiffMode controls how diffs are displayed. The string values are what gets
+// persisted in the config file.
+type DiffMode string
 
 const (
-	DiffBuiltin DiffMode = iota // bat side-by-side, rendered in the TUI (default)
-	DiffDifft                   // difft-aligned 50/50 columns (when difft is on PATH)
+	DiffBuiltin DiffMode = "builtin" // bat side-by-side, rendered in the TUI (default)
+	DiffDifft   DiffMode = "difft"   // difft-aligned 50/50 columns (when difft is on PATH)
 )
+
+// parseDiffMode normalizes a stored config value; anything unrecognized —
+// including the zero value of an unset setting — is the builtin view.
+func parseDiffMode(s string) DiffMode {
+	if DiffMode(strings.ToLower(strings.TrimSpace(s))) == DiffDifft {
+		return DiffDifft
+	}
+	return DiffBuiltin
+}
+
+// startupDiffMode resolves the persisted diff mode against difft's
+// availability: a stored difft preference only takes effect when difft is
+// actually on PATH. The setting itself is left untouched either way, so the
+// preference resumes on a machine where difft is back.
+func startupDiffMode(stored string, difftAvailable bool) DiffMode {
+	if difftAvailable && parseDiffMode(stored) == DiffDifft {
+		return DiffDifft
+	}
+	return DiffBuiltin
+}
 
 // Model is the main bubbletea model.
 type Model struct {
@@ -68,15 +90,10 @@ type Model struct {
 	menuScroll int
 
 	showHint       bool
-	previewScroll  int // vertical scroll offset for the preview code area
-	previewHScroll int // horizontal scroll offset for the preview code area
-	resultScroll   int // vertical scroll offset for the result diff
-	resultHScroll  int // horizontal scroll offset for the result diff
-
-	// Diff display. bat side-by-side is the default; difft, when available on
-	// PATH, is an optional enhancement that aligns the columns and highlights
-	// changes (toggled with "d"). gohelix runs difft in JSON mode and lays the
-	// result out itself into exact 50/50 columns.
+	previewScroll  int          // vertical scroll offset for the preview code area
+	previewHScroll int          // horizontal scroll offset for the preview code area
+	resultScroll   int          // vertical scroll offset for the result diff
+	resultHScroll  int          // horizontal scroll offset for the result diff
 	diffMode       DiffMode     // current active mode
 	difftAvailable bool         // whether difft is on PATH
 	difftResult    difft.Result // parsed difft alignment for the current context
@@ -123,15 +140,17 @@ func permStartingAt(n, start int) []int {
 }
 
 func newModel(chs []challenges.Challenge, perm []int) Model {
+	cfg := config.NewStore()
+	difftAvailable := difft.Available()
 	return Model{
 		challenges:     chs,
 		scores:         score.NewStore(),
-		cfg:            config.NewStore(),
+		cfg:            cfg,
 		state:          statePreview,
 		perm:           perm,
 		permIdx:        0,
-		diffMode:       DiffBuiltin, // bat side-by-side by default; "d" enables difft
-		difftAvailable: difft.Available(),
+		diffMode:       startupDiffMode(cfg.Settings.DiffMode, difftAvailable),
+		difftAvailable: difftAvailable,
 	}
 }
 
@@ -199,17 +218,24 @@ func (m Model) current() challenges.Challenge {
 
 // toggleDiffMode switches between the bat side-by-side view and the difft-aligned
 // view, returning a command to compute the difft diff when switching to it.
-// It is a no-op when difft is not available.
+// It is a no-op when difft is not available. The choice is persisted, so the
+// next session starts in the same mode.
 func (m *Model) toggleDiffMode() tea.Cmd {
 	if !m.difftAvailable {
 		return nil
 	}
-	if m.diffMode == DiffBuiltin {
-		m.diffMode = DiffDifft
+	if m.diffMode != DiffDifft {
+		m.setDiffMode(DiffDifft)
 		return m.requestDiff()
 	}
-	m.diffMode = DiffBuiltin
+	m.setDiffMode(DiffBuiltin)
 	return nil
+}
+
+func (m *Model) setDiffMode(mode DiffMode) {
+	m.diffMode = mode
+	m.cfg.Settings.DiffMode = string(mode)
+	m.cfg.Save()
 }
 
 // requestDiff returns a command that computes the difft alignment for the current

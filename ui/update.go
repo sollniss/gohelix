@@ -8,7 +8,9 @@ import (
 
 func (m Model) Init() tea.Cmd {
 	if m.diffMode == DiffDifft {
-		// Compute the initial diff via the real model in Update.
+		// A persisted difft preference needs its first alignment computed up
+		// front; route through Update so it runs against the real model (see
+		// requestDiffMsg).
 		return func() tea.Msg { return requestDiffMsg{} }
 	}
 	return nil

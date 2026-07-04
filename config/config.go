@@ -18,6 +18,12 @@ type QuitCommand struct {
 
 // Settings holds user preferences persisted between runs.
 type Settings struct {
+	// DiffMode is the diff view used on the preview and result screens:
+	// "builtin" (bat side-by-side) or "difft" (difft-aligned columns, applied
+	// only when difft is on PATH). The "d" key toggles it in the TUI; the last
+	// choice is remembered here.
+	DiffMode string `json:"diff_mode,omitempty"`
+
 	// SolutionSplit is where the read-only solution window opens during a
 	// challenge: "off", "left", "right", "top" or "bottom".
 	SolutionSplit string `json:"solution_split,omitempty"`
