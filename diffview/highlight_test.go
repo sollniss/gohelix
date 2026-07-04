@@ -142,6 +142,24 @@ func TestRenderSideBySideUnevenRows(t *testing.T) {
 	}
 }
 
+func TestMaxHScroll(t *testing.T) {
+	r := Renderer{Width: 48} // colWidth = 20
+
+	// The widest line (30 cells) bounds the scroll: 30 - 20 = 10 puts its tail
+	// at the column's right edge.
+	if got := r.MaxHScroll("short\n", strings.Repeat("x", 30)+"\n"); got != 10 {
+		t.Errorf("MaxHScroll = %d, want 10", got)
+	}
+	// Content narrower than the column can't scroll at all.
+	if got := r.MaxHScroll("abc", "de"); got != 0 {
+		t.Errorf("MaxHScroll(narrow) = %d, want 0", got)
+	}
+	// Tabs count as 4 cells, matching the rendered output: 4 + 20 = 24 cells.
+	if got := r.MaxHScroll("\t"+strings.Repeat("y", 20), ""); got != 4 {
+		t.Errorf("MaxHScroll(tabbed) = %d, want 4", got)
+	}
+}
+
 func TestDifftFallsBackToBuiltinWhenEmpty(t *testing.T) {
 	// With no alignment, Difft must produce exactly the Builtin layout.
 	var r Renderer

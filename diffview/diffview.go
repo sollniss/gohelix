@@ -29,6 +29,27 @@ type Renderer struct {
 	Width int
 }
 
+// colWidth is the width of one diff column: half the terminal width minus the
+// outer padding (2+2) and the column gap (4).
+func (r Renderer) colWidth() int {
+	if r.Width > 0 {
+		return max((r.Width-8)/2, 20)
+	}
+	return 38
+}
+
+// MaxHScroll returns the largest useful horizontal scroll offset for a
+// side-by-side diff of left and right.
+func (r Renderer) MaxHScroll(left, right string) int {
+	widest := 0
+	for _, src := range []string{left, right} {
+		for _, line := range strings.Split(strings.TrimRight(src, "\n"), "\n") {
+			widest = max(widest, ansi.StringWidth(expandTabs(line)))
+		}
+	}
+	return max(widest-r.colWidth(), 0)
+}
+
 // Builtin renders a syntax-highlighted (via bat) side-by-side comparison of left and right
 // content under the given column labels, scrolled horizontally by hOffset.
 func (r Renderer) Builtin(leftLabel, rightLabel, left, right string, hOffset int) string {
@@ -175,10 +196,7 @@ func (r Renderer) renderSideBySide(
 	leftLines, rightLines []string,
 	hOffset int,
 ) string {
-	colWidth := 38
-	if r.Width > 0 {
-		colWidth = max((r.Width-8)/2, 20)
-	}
+	colWidth := r.colWidth()
 	rule := dimStyle.Render(strings.Repeat("┄", colWidth))
 
 	// columnGap is the spacing between the two diff columns.

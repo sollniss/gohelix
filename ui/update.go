@@ -26,6 +26,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// difft output is width-independent (gohelix lays it out and truncates at
 		// render time), so a resize needs no recompute.
 		m.clampMenuScroll() // the menu window depends on height
+		// A wider terminal widens the columns, lowering the max horizontal
+		// offset; pull any stale offset back into range.
+		m.clampPreviewHScroll()
+		m.clampResultHScroll()
 		return m, nil
 	case requestDiffMsg:
 		return m, m.requestDiff()
@@ -154,6 +158,7 @@ func (m Model) previewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "l", "right":
 		m.previewHScroll += 4
+		m.clampPreviewHScroll()
 	case "h", "left":
 		m.previewHScroll -= 4
 		if m.previewHScroll < 0 {
@@ -188,6 +193,7 @@ func (m Model) resultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "l", "right":
 		m.resultHScroll += 4
+		m.clampResultHScroll()
 	case "h", "left":
 		m.resultHScroll -= 4
 		if m.resultHScroll < 0 {

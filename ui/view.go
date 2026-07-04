@@ -308,6 +308,25 @@ func (m *Model) clampResultScroll() {
 	m.resultScroll = min(m.resultScroll, maxScroll)
 }
 
+// clampPreviewHScroll ensures previewHScroll doesn't scroll past the widest
+// preview line into blank space.
+func (m *Model) clampPreviewHScroll() {
+	ch := m.current()
+	r := diffview.Renderer{Width: m.width}
+	m.previewHScroll = min(m.previewHScroll, r.MaxHScroll(ch.Before, ch.After))
+}
+
+// clampResultHScroll ensures resultHScroll doesn't scroll past the widest
+// result-diff line into blank space.
+func (m *Model) clampResultHScroll() {
+	if m.lastResult == nil || m.passed {
+		m.resultHScroll = 0
+		return
+	}
+	r := diffview.Renderer{Width: m.width}
+	m.resultHScroll = min(m.resultHScroll, r.MaxHScroll(m.lastResult.Output, m.current().After))
+}
+
 // diffHeaderRows is the number of rows (column labels + top rule) the diff body
 // places before its first content row; see diffview.renderSideBySide.
 const diffHeaderRows = 2
