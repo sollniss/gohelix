@@ -158,6 +158,28 @@ func parseCtrlToken(tok string) (byte, bool) {
 	return 0, false
 }
 
+// editTimer measures editing time. Yhe clock starts on the first counted keystroke
+// rather than at editor launch.
+// Keystrokes that don't count toward the score don't start it either.
+type editTimer struct {
+	first time.Time // zero until the first counted keystroke
+}
+
+// keystroke marks a counted keystroke at time now; the first one starts the clock.
+func (t *editTimer) keystroke(now time.Time) {
+	if t.first.IsZero() {
+		t.first = now
+	}
+}
+
+// elapsed returns the editing time up to end, or zero when nothing was typed.
+func (t *editTimer) elapsed(end time.Time) time.Duration {
+	if t.first.IsZero() {
+		return 0
+	}
+	return end.Sub(t.first)
+}
+
 // Result holds the outcome of a challenge attempt.
 type Result struct {
 	Output     string
@@ -395,7 +417,7 @@ func goWorkFile(extraDirs ...string) string {
 	for _, d := range extraDirs {
 		b.WriteString("\t")
 		if strings.ContainsAny(d, " \t\"'`") {
-			b.WriteString(fmt.Sprintf("%q", d))
+			fmt.Fprintf(&b, "%q", d)
 		} else {
 			b.WriteString(d)
 		}
@@ -568,8 +590,8 @@ func (r *Runner) Run() error {
 		return fmt.Errorf("setting raw mode: %w", err)
 	}
 
-	start := time.Now()
 	var keystrokes atomic.Int64
+	var timer editTimer // written by the input goroutine, read after inputDone
 
 	// Proxy PTY output → terminal stdout. firstOutput is closed on helix's first
 	// render so split mode can move focus once helix is actually accepting input
@@ -643,6 +665,7 @@ func (r *Runner) Run() error {
 				}
 				if counted {
 					keystrokes.Add(1)
+					timer.keystroke(time.Now())
 				}
 				for i, out := range outs {
 					if i > 0 {
@@ -673,9 +696,10 @@ func (r *Runner) Run() error {
 		}
 	}()
 
-	// Wait for helix to exit
+	// Wait for helix to exit. The editing clock ends here, before our own
+	// cleanup below.
 	_ = cmd.Wait()
-	duration := time.Since(start)
+	end := time.Now()
 
 	// Stop the input proxy and wait for it to exit before returning, so it can't
 	// consume the next keystroke meant for the TUI.
@@ -697,7 +721,7 @@ func (r *Runner) Run() error {
 	r.result = Result{
 		Output:     string(output),
 		Keystrokes: int(keystrokes.Load()),
-		Duration:   duration,
+		Duration:   timer.elapsed(end),
 	}
 	return nil
 }

@@ -3,7 +3,8 @@
 A terminal game for practicing [Helix](https://helix-editor.com) motions. Each
 challenge gives you a `before.go` and an `after.go`. Your job is to transform one
 into the other in as few keystrokes as possible. Your best keystroke count and time are saved
-per challenge.
+per challenge. The timer starts on your first keystroke, so launching helix and
+reading the code before you start editing are free.
 
 [demo](https://github.com/user-attachments/assets/30f0ebce-3a8f-4795-b95d-b534810e9697)
 

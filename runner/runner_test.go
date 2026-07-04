@@ -6,7 +6,25 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestEditTimerStartsOnFirstKeystroke(t *testing.T) {
+	var timer editTimer
+	base := time.Now()
+
+	// Nothing typed: no editing time, however long helix was open.
+	if d := timer.elapsed(base.Add(5 * time.Second)); d != 0 {
+		t.Fatalf("elapsed with no keystrokes = %v, want 0", d)
+	}
+
+	// The first keystroke starts the clock; later ones don't restart it.
+	timer.keystroke(base.Add(3 * time.Second))
+	timer.keystroke(base.Add(4 * time.Second))
+	if d := timer.elapsed(base.Add(10 * time.Second)); d != 7*time.Second {
+		t.Fatalf("elapsed = %v, want 7s (from the first keystroke)", d)
+	}
+}
 
 func TestSplitArgs(t *testing.T) {
 	const ch, sol = "/t/challenge.go", "/t/solution.go"
