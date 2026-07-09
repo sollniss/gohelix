@@ -8,15 +8,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
-	"github.com/creack/pty"
+	pty "github.com/aymanbagabas/go-pty"
 	"github.com/muesli/cancelreader"
 	"golang.org/x/term"
 )
@@ -742,22 +740,20 @@ func (r *Runner) Run() error {
 
 	// Start helix in a PTY, with its working directory pinned to the challenge
 	// dir so the go.work there defines the LSP workspace.
-	cmd := exec.Command(hxPath, append([]string{"-w", tmpDir}, args...)...)
-	cmd.Env = append(os.Environ(), "COLORTERM=truecolor")
-	ptmx, err := pty.Start(cmd)
+	ptmx, err := pty.New()
 	if err != nil {
+		return fmt.Errorf("opening pty: %w", err)
+	}
+	cmd := ptmx.Command(hxPath, append([]string{"-w", tmpDir}, args...)...)
+	cmd.Env = append(os.Environ(), "COLORTERM=truecolor")
+	if err := cmd.Start(); err != nil {
+		ptmx.Close()
 		return fmt.Errorf("starting helix: %w", err)
 	}
 
-	// Handle terminal resize signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
-	go func() {
-		for range sigCh {
-			_ = pty.InheritSize(os.Stdin, ptmx)
-		}
-	}()
-	_ = pty.InheritSize(os.Stdin, ptmx) // initial size
+	// Keep the PTY's window size in sync with the real terminal.
+	// This is platform-specific (SIGWINCH on Unix, console events on Windows).
+	stopResize := watchResize(ptmx)
 
 	// Set terminal to raw mode for proper keystroke forwarding
 	fd := int(os.Stdin.Fd())
@@ -885,8 +881,7 @@ func (r *Runner) Run() error {
 	<-inputDone
 
 	// Cleanup
-	signal.Stop(sigCh)
-	close(sigCh)
+	stopResize()
 	_ = term.Restore(fd, oldState)
 	ptmx.Close()
 
