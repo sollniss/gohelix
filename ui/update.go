@@ -176,7 +176,11 @@ func (m Model) resultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, tea.Quit
 	case "esc":
+		// The picker only ever leads back to a preview (the current challenge
+		// via esc, or a newly picked one), so the alignment computed for "your
+		// solution vs expected" is stale from here on: request the preview's.
 		m.openMenu()
+		cmd = m.requestDiff()
 	case "r":
 		// Retry same challenge: the preview diffs before vs after.
 		m.state = statePreview
