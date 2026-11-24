@@ -577,6 +577,85 @@ func (f *peekFilter) process(in []byte) (outs [][]byte, counted []byte) {
 	return outs, counted
 }
 
+// kittyStripper removes kitty-keyboard-protocol mode changes from helix's
+// output in split mode. When the terminal supports the protocol helix turns it
+// on, and control keys then arrive as CSI-u sequences (Ctrl-t becomes
+// \x1b[116;5u) instead of the single bytes the peek filter and the quit
+// detector match on. Helix decodes legacy input regardless of what it
+// requested, so withholding the mode changes from the terminal keeps the whole
+// session on legacy encoding with no other effect. The pop is dropped along
+// with the push so the terminal's flag stack is left exactly as it was.
+type kittyStripper struct {
+	pending []byte // possible start of a mode change cut off at the read boundary
+}
+
+// maxKittySeq bounds a carried partial sequence; real mode changes are well
+// under ten bytes.
+const maxKittySeq = 16
+
+// strip returns in without kitty keyboard mode changes, resuming any partial
+// sequence carried from the previous read. The result may alias in.
+func (s *kittyStripper) strip(in []byte) []byte {
+	buf := in
+	if len(s.pending) > 0 {
+		buf = append(s.pending, in...)
+		s.pending = nil
+	}
+	out := buf[:0] // compacted in place: writes never pass the read position
+	for i := 0; i < len(buf); {
+		esc := bytes.IndexByte(buf[i:], 0x1b)
+		if esc < 0 {
+			out = append(out, buf[i:]...)
+			break
+		}
+		out = append(out, buf[i:i+esc]...)
+		i += esc
+		n, partial := kittyModeSeq(buf[i:])
+		switch {
+		case partial:
+			s.pending = append([]byte(nil), buf[i:]...)
+			return out
+		case n > 0:
+			i += n // dropped
+		default:
+			out = append(out, 0x1b)
+			i++
+		}
+	}
+	return out
+}
+
+// kittyModeSeq reports the length of the kitty keyboard mode change at the
+// start of b, which begins with Esc: a push (\x1b[>…u), pop (\x1b[<…u) or set
+// (\x1b[=…u) of the enhancement flags. n is 0 when b starts with anything
+// else; partial means b ends before that can be decided. The query (\x1b[?u)
+// is not a mode change and passes through.
+func kittyModeSeq(b []byte) (n int, partial bool) {
+	if len(b) < 2 {
+		return 0, true
+	}
+	if b[1] != '[' {
+		return 0, false
+	}
+	if len(b) < 3 {
+		return 0, true
+	}
+	if b[2] != '>' && b[2] != '<' && b[2] != '=' {
+		return 0, false
+	}
+	i := 3
+	for i < len(b) && (b[i] == ';' || (b[i] >= '0' && b[i] <= '9')) {
+		i++
+	}
+	if i == len(b) {
+		return 0, i <= maxKittySeq
+	}
+	if b[i] == 'u' {
+		return i + 1, false
+	}
+	return 0, false
+}
+
 // SplitOptions configures how the solution split behaves.
 type SplitOptions struct {
 	Pos     SplitPos
@@ -792,6 +871,12 @@ func (r *Runner) Run() error {
 	go func() {
 		signaled := false
 		buf := make([]byte, 32*1024)
+		// Split mode matches raw key bytes, so keep the terminal on legacy key
+		// encoding there (see kittyStripper).
+		var kitty *kittyStripper
+		if splitting {
+			kitty = &kittyStripper{}
+		}
 		for {
 			n, readErr := ptmx.Read(buf)
 			if n > 0 {
@@ -799,11 +884,19 @@ func (r *Runner) Run() error {
 					signaled = true
 					close(firstOutput)
 				}
-				if _, writeErr := os.Stdout.Write(buf[:n]); writeErr != nil {
+				out := buf[:n]
+				if kitty != nil {
+					out = kitty.strip(out)
+				}
+				if _, writeErr := os.Stdout.Write(out); writeErr != nil {
 					return
 				}
 			}
 			if readErr != nil {
+				if kitty != nil && len(kitty.pending) > 0 {
+					// Not a mode change after all: helix is gone, pass it on.
+					_, _ = os.Stdout.Write(kitty.pending)
+				}
 				return
 			}
 		}

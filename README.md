@@ -69,3 +69,8 @@ Key sequences are space-separated tokens: `ctrl-x`, `esc`, `space`, `tab`,
 If `config.json` can't be read or parsed, the preview shows a warning and the
 file is left untouched: the in-app toggles still work for the session but are
 not saved until the file is fixed.
+
+During split runs the terminal stays on legacy key encoding (helix's
+kitty-keyboard-protocol request is not passed on), because the peek key and
+quit detection match raw key bytes. Bindings that need that protocol, such as
+telling `C-i` from `tab`, are unavailable while the split is on.

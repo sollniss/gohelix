@@ -597,3 +597,63 @@ func TestQuitDetectorRevertsSolutionBeforeQuitting(t *testing.T) {
 		t.Errorf("repeated injections = %q then %q", first, second)
 	}
 }
+
+func TestKittyStripperDropsModeChanges(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"push", "a\x1b[>5ub", "ab"},
+		{"pop", "a\x1b[<1ub", "ab"},
+		{"pop without count", "a\x1b[<ub", "ab"},
+		{"set", "a\x1b[=5;1ub", "ab"},
+		{"several", "\x1b[>5u\x1b[?1049h\x1b[<1u", "\x1b[?1049h"},
+		{"query passes", "\x1b[?u\x1b[c", "\x1b[?u\x1b[c"},
+		{"restore cursor passes", "\x1b[u", "\x1b[u"},
+		{"other > sequences pass", "\x1b[>c\x1b[>4;2m\x1b[>0q", "\x1b[>c\x1b[>4;2m\x1b[>0q"},
+		{"sgr and text pass", "\x1b[38;5;1mred\x1b[0m", "\x1b[38;5;1mred\x1b[0m"},
+		{"non-CSI escapes pass", "\x1b]0;title\x07\x1b7\x1b8", "\x1b]0;title\x07\x1b7\x1b8"},
+		{"plain", "hello", "hello"},
+	}
+	for _, tc := range cases {
+		// Whole, and split at every byte boundary: the result must not depend
+		// on how the pty chunks helix's output.
+		for cut := 0; cut <= len(tc.in); cut++ {
+			var s kittyStripper
+			got := string(s.strip([]byte(tc.in[:cut])))
+			got += string(s.strip([]byte(tc.in[cut:])))
+			got += string(s.pending)
+			if got != tc.want {
+				t.Errorf("%s (cut at %d): got %q, want %q", tc.name, cut, got, tc.want)
+			}
+		}
+	}
+}
+
+func TestKittyStripperCarriesOnlyUndecidedTails(t *testing.T) {
+	var s kittyStripper
+
+	// A trailing Esc could start a mode change: held back, nothing lost.
+	if got := s.strip([]byte("abc\x1b")); string(got) != "abc" || string(s.pending) != "\x1b" {
+		t.Fatalf("got %q, pending %q", got, s.pending)
+	}
+	// Resolved by the next read as an ordinary sequence.
+	if got := s.strip([]byte("[2Jx")); string(got) != "\x1b[2Jx" || len(s.pending) != 0 {
+		t.Fatalf("got %q, pending %q", got, s.pending)
+	}
+
+	// Byte by byte across a push.
+	var out []byte
+	for _, b := range []byte("x\x1b[>5uy") {
+		out = append(out, s.strip([]byte{b})...)
+	}
+	if string(out) != "xy" || len(s.pending) != 0 {
+		t.Fatalf("byte-wise push: got %q, pending %q", out, s.pending)
+	}
+
+	// An endless parameter run is not a mode change: it is released instead of
+	// being buffered forever.
+	long := "\x1b[>" + strings.Repeat("1;", 20)
+	if got := s.strip([]byte(long)); string(got)+string(s.pending) != long || len(s.pending) > maxKittySeq {
+		t.Fatalf("overlong run: got %q, pending %q", got, s.pending)
+	}
+}
