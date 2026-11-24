@@ -65,3 +65,7 @@ sessions.
 
 Key sequences are space-separated tokens: `ctrl-x`, `esc`, `space`, `tab`,
 `enter`, `up`/`down`/`left`/`right`; any other token is typed literally.
+
+If `config.json` can't be read or parsed, the preview shows a warning and the
+file is left untouched: the in-app toggles still work for the session but are
+not saved until the file is fixed.

@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -51,7 +54,12 @@ type Settings struct {
 // Store persists settings to ~/.config/gohelix/config.json.
 type Store struct {
 	Settings Settings
-	path     string
+	// LoadErr is set when config.json exists but could not be read or parsed
+	// (typically a typo in a hand-edited file). Whatever did parse is used for
+	// the session, and Save becomes a no-op so the user's file is never
+	// overwritten with a partial or default configuration.
+	LoadErr error
+	path    string
 }
 
 // NewStore loads or creates the settings store. Like the score store, it
@@ -69,16 +77,23 @@ func NewStore() *Store {
 	s.path = filepath.Join(dir, "config.json")
 
 	data, err := os.ReadFile(s.path)
-	if err == nil {
-		_ = json.Unmarshal(data, &s.Settings)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// first run: nothing to load
+	case err != nil:
+		s.LoadErr = err
+	case len(bytes.TrimSpace(data)) > 0: // an empty file is just "no settings"
+		s.LoadErr = json.Unmarshal(data, &s.Settings)
 	}
 
 	return s
 }
 
-// Save writes the settings to disk, best-effort.
+// Save writes the settings to disk, best-effort. It does nothing when the
+// existing file failed to load (see LoadErr): saving then would replace the
+// user's settings with whatever survived the failed parse.
 func (s *Store) Save() {
-	if s.path == "" {
+	if s.path == "" || s.LoadErr != nil {
 		return
 	}
 	data, err := json.MarshalIndent(s.Settings, "", "  ")

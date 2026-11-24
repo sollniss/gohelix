@@ -30,6 +30,9 @@ var (
 			Bold(true).
 			Foreground(lipgloss.Color("1")) // red
 
+	warnStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("1")) // red
+
 	recordStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("11")) // bright yellow

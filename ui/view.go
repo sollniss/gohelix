@@ -113,6 +113,11 @@ func (m Model) previewHeader() string {
 	header.WriteString(titleStyle.Render(ch.Title))
 	header.WriteString("\n")
 
+	if err := m.cfg.LoadErr; err != nil {
+		header.WriteString(warnStyle.Render(fmt.Sprintf("⚠ config.json error, settings won't be saved: %v", err)))
+		header.WriteString("\n\n")
+	}
+
 	if m.showHint {
 		header.WriteString(hintStyle.Render("💡 " + ch.Hint))
 		header.WriteString("\n")
