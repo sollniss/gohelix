@@ -214,25 +214,26 @@ func TestParseKeySeq(t *testing.T) {
 func TestQuitDetectorCustomCommands(t *testing.T) {
 	// A custom binding (ZZ) is detected, and a user pair for a builtin typed
 	// sequence takes precedence over the builtin injection. Injections carry a
-	// leading Esc in their own chunk (clears helix's pending-key state).
+	// leading Esc in their own chunk (clears helix's pending-key state), then the
+	// solution revert (no window moves here: none were given).
 	d := newQuitDetector([]QuitCommand{
 		{Typed: []byte("ZZ"), Inject: []byte(":qa\r")},
 		{Typed: []byte(":wq\r"), Inject: []byte(":custom-qa\r")},
-	})
+	}, nil, nil)
 
 	got := d.inject([]byte("ZZ"))
-	if join(got) != "\x1b:qa\r" || len(got) != 2 || string(got[0]) != "\x1b" {
+	if join(got) != "\x1b:reload\r:qa\r" || len(got) != 2 || string(got[0]) != "\x1b" {
 		t.Fatalf("custom ZZ: inject = %q, want Esc chunk then :qa", got)
 	}
-	if got := d.inject([]byte(":wq\r")); join(got) != "\x1b:custom-qa\r" {
+	if got := d.inject([]byte(":wq\r")); join(got) != "\x1b:reload\r:custom-qa\r" {
 		t.Fatalf("user override of :wq should win: inject = %q", got)
 	}
 	// Builtins still work alongside the extras.
-	if got := d.inject([]byte(":q\r")); join(got) != "\x1b:qa\r" {
+	if got := d.inject([]byte(":q\r")); join(got) != "\x1b:reload\r:qa\r" {
 		t.Fatalf("builtin :q should still fire: inject = %q", got)
 	}
 	// Empty/half pairs are ignored rather than matching everything.
-	d = newQuitDetector([]QuitCommand{{Typed: nil, Inject: []byte(":qa\r")}})
+	d = newQuitDetector([]QuitCommand{{Typed: nil, Inject: []byte(":qa\r")}}, nil, nil)
 	if got := d.inject([]byte("x")); got != nil {
 		t.Fatalf("empty typed pattern must be ignored, injected %q", got)
 	}
@@ -517,12 +518,12 @@ func TestQuitDetectorDetectsBuiltinCommands(t *testing.T) {
 		typed string // bytes fed one at a time, as a human types them
 		want  string // expected injection ("" = none)
 	}{
-		{"write-quit", ":wq\r", "\x1b:qa\r"},
-		{"quit", ":q\r", "\x1b:qa\r"},
-		{"force-quit", ":q!\r", "\x1b:qa!\r"},
-		{"force-write-quit", ":wq!\r", "\x1b:qa!\r"},
-		{"x-alias", ":x\r", "\x1b:qa\r"},
-		{"force-x", ":x!\r", "\x1b:qa!\r"},
+		{"write-quit", ":wq\r", "\x1b:reload\r:qa\r"},
+		{"quit", ":q\r", "\x1b:reload\r:qa\r"},
+		{"force-quit", ":q!\r", "\x1b:reload\r:qa!\r"},
+		{"force-write-quit", ":wq!\r", "\x1b:reload\r:qa!\r"},
+		{"x-alias", ":x\r", "\x1b:reload\r:qa\r"},
+		{"force-x", ":x!\r", "\x1b:reload\r:qa!\r"},
 		{"save-only", ":w\r", ""},     // saving must not trigger a quit
 		{"no-enter-yet", ":wq", ""},   // command not submitted
 		{"unrelated", "iabc\x1b", ""}, // ordinary editing
@@ -530,7 +531,7 @@ func TestQuitDetectorDetectsBuiltinCommands(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := newQuitDetector(nil)
+			d := newQuitDetector(nil, nil, nil)
 			var got string
 			// Feed byte-by-byte so we exercise matching across reads.
 			for i := 0; i < len(tc.typed); i++ {
@@ -546,7 +547,7 @@ func TestQuitDetectorDetectsBuiltinCommands(t *testing.T) {
 }
 
 func TestQuitDetectorFiresOncePerCommand(t *testing.T) {
-	d := newQuitDetector(nil)
+	d := newQuitDetector(nil, nil, nil)
 	var fired int
 	feed := func(s string) {
 		for i := 0; i < len(s); i++ {
@@ -563,5 +564,36 @@ func TestQuitDetectorFiresOncePerCommand(t *testing.T) {
 	feed("j")
 	if fired != 1 {
 		t.Fatalf("injection fired again after the command completed: %d", fired)
+	}
+}
+
+func TestQuitDetectorRevertsSolutionBeforeQuitting(t *testing.T) {
+	// A solution buffer the user edited (while peeking, or after clicking into
+	// it) would make the non-forcing quit-all fail, so every injection first
+	// moves to the solution, reloads it, and moves back to the challenge. The
+	// quit itself must stay non-forcing: a refused or mistaken quit (":wq"
+	// typed in insert mode) must not discard the challenge.
+	for _, pos := range []SplitPos{SplitLeft, SplitRight, SplitTop, SplitBottom} {
+		toSol, toCh := splitMoves(pos, DefaultWindowMoves())
+		d := newQuitDetector(nil, toSol, toCh)
+
+		got := d.inject([]byte(":wq\r"))
+		want := "\x1b" + string(toSol) + ":reload\r" + string(toCh) + ":qa\r"
+		if join(got) != want {
+			t.Errorf("%s: inject = %q, want %q", pos, join(got), want)
+		}
+		if len(got) != 2 || string(got[0]) != "\x1b" {
+			t.Errorf("%s: want the Esc in a chunk of its own, got %q", pos, got)
+		}
+	}
+
+	// The prefix is not consumed or corrupted by use: a second quit (the first
+	// was refused) injects the same sequence again.
+	toSol, toCh := splitMoves(SplitRight, DefaultWindowMoves())
+	d := newQuitDetector(nil, toSol, toCh)
+	first := join(d.inject([]byte(":q\r")))
+	second := join(d.inject([]byte(":wq!\r")))
+	if first != "\x1b\x17l:reload\r\x17h:qa\r" || second != "\x1b\x17l:reload\r\x17h:qa!\r" {
+		t.Errorf("repeated injections = %q then %q", first, second)
 	}
 }

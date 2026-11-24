@@ -43,11 +43,30 @@ var defaultQuitCommands = []QuitCommand{
 // with the same Typed sequence overrides the builtin injection.
 type quitDetector struct {
 	commands []QuitCommand
+	prefix   []byte // injected ahead of every quit, see newQuitDetector
 	tailCap  int
 	tail     []byte // rolling buffer of recent forwarded bytes
 }
 
-func newQuitDetector(extra []QuitCommand) *quitDetector {
+// newQuitDetector builds the detector for a split whose windows are reached
+// with the given focus moves (see splitMoves).
+//
+// Every injection starts by reverting the solution buffer: nothing stops the
+// user from editing it (while peeking, or after clicking into it), and a
+// modified solution makes the injected quit-all fail with "unsaved buffer"
+// right after the challenge was saved and closed. So focus goes to the
+// solution, :reload discards its changes, and focus returns to the challenge
+// before the quit itself. The quit stays non-forcing on purpose: when the
+// user's own quit was refused (unsaved challenge) or the match was a false
+// positive (":wq" typed in insert mode), the injected one is refused as well
+// and nothing is lost. The reload cannot hit the challenge: with two windows
+// the move lands on the solution, and with one the challenge is already gone.
+//
+// The Esc in front comes first because a quit executed through a key binding
+// (e.g. a ZZ minor mode) leaves helix's pending-key state active, which
+// silently swallows the next key; Esc clears it, and is a no-op after a quit
+// typed at the command line.
+func newQuitDetector(extra []QuitCommand, toSolution, toChallenge []byte) *quitDetector {
 	cmds := make([]QuitCommand, 0, len(extra)+len(defaultQuitCommands))
 	for _, c := range extra {
 		if len(c.Typed) > 0 && len(c.Inject) > 0 {
@@ -59,18 +78,17 @@ func newQuitDetector(extra []QuitCommand) *quitDetector {
 	for _, c := range cmds {
 		maxLen = max(maxLen, len(c.Typed))
 	}
-	return &quitDetector{commands: cmds, tailCap: maxLen + 4}
+	prefix := []byte{0x1b}
+	prefix = append(prefix, toSolution...)
+	prefix = append(prefix, ":reload\r"...)
+	prefix = append(prefix, toChallenge...)
+	return &quitDetector{commands: cmds, prefix: prefix, tailCap: maxLen + 4}
 }
 
 // inject appends the newly-forwarded input to the rolling tail and, if it now
 // ends with a recognized quit command, returns the chunks to inject (written
 // with escGap pauses between them) and clears the tail so the same command
 // can't fire twice. It returns nil otherwise.
-//
-// The injection is prefixed with Esc: a quit executed through a key binding
-// (e.g. a ZZ minor mode) leaves helix's pending-key state active, which
-// silently swallows the next ':' — Esc clears it, and is a no-op after a quit
-// typed at the command line.
 func (d *quitDetector) inject(in []byte) [][]byte {
 	d.tail = append(d.tail, in...)
 	if len(d.tail) > d.tailCap {
@@ -79,7 +97,8 @@ func (d *quitDetector) inject(in []byte) [][]byte {
 	for _, c := range d.commands {
 		if bytes.HasSuffix(d.tail, c.Typed) {
 			d.tail = d.tail[:0]
-			return escChunks(append([]byte{0x1b}, c.Inject...))
+			seq := append([]byte(nil), d.prefix...)
+			return escChunks(append(seq, c.Inject...))
 		}
 	}
 	return nil
@@ -828,7 +847,8 @@ func (r *Runner) Run() error {
 		var quits *quitDetector
 		if splitting {
 			filter = newPeekFilter(r.opts.Pos, r.opts.PeekKey, r.opts.Moves)
-			quits = newQuitDetector(r.opts.Quits)
+			toSolution, toChallenge := splitMoves(r.opts.Pos, r.opts.Moves)
+			quits = newQuitDetector(r.opts.Quits, toSolution, toChallenge)
 		}
 		for {
 			n, readErr := stdin.Read(buf)
